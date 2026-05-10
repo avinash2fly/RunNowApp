@@ -37,10 +37,11 @@ export default function AddEditScheduleScreen() {
   const scheduleId = route.params?.scheduleId;
   const isEdit = !!scheduleId;
 
-  const [hour, setHour] = useState(7);
-  const [minute, setMinute] = useState(0);
-  const [isPM, setIsPM] = useState(false);
-  const [selectedDay, setSelectedDay] = useState<DayOfWeek>(new Date().getDay() as DayOfWeek);
+  const defaultTime = new Date(Date.now() + 30 * 60 * 1000);
+  const [hour, setHour] = useState(defaultTime.getHours() % 12 || 12);
+  const [minute, setMinute] = useState(Math.floor(defaultTime.getMinutes() / 5) * 5);
+  const [isPM, setIsPM] = useState(defaultTime.getHours() >= 12);
+  const [selectedDay, setSelectedDay] = useState<DayOfWeek>(defaultTime.getDay() as DayOfWeek);
   const [distanceKm, setDistanceKm] = useState(5);
   const [runType, setRunType] = useState<RunType>('Easy');
   const [notifyNoRain, setNotifyNoRain] = useState(true);
