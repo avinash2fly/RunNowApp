@@ -79,7 +79,7 @@ export function AppNavigator() {
       <Stack.Screen
         name="AddEditSchedule"
         component={AddEditScheduleScreen}
-        options={{ presentation: 'modal' }}
+        options={{ presentation: 'fullScreenModal' }}
       />
     </Stack.Navigator>
   );

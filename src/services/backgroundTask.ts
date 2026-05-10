@@ -2,7 +2,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getEnabledSchedules, insertHistoryEntry } from './database';
-import { fetchWeatherForecast, windMsToKmh } from './weather';
+import { fetchWeatherForecast } from './weather';
 import { sendRunNotification } from './notifications';
 
 export const BACKGROUND_FETCH_TASK = 'RUNNOW_WEATHER_CHECK';
@@ -12,7 +12,7 @@ const PREFS_KEY = '@runnow_prefs';
 interface StoredPrefs {
   homeLat: number | null;
   homeLon: number | null;
-  owmApiKey: string;
+  weatherApiKey: string;
   windThresholdKmh: number;
   notifyLeadMinutes: number;
 }
@@ -50,7 +50,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   try {
     const prefs = await loadPrefs();
 
-    if (!prefs?.homeLat || !prefs?.homeLon || !prefs?.owmApiKey) {
+    if (!prefs?.homeLat || !prefs?.homeLon || !prefs?.weatherApiKey) {
       console.log('[BackgroundTask] Missing location or API key');
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
@@ -67,24 +67,24 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
 
+    const windThreshold = prefs.windThresholdKmh ?? 15;
+
     let weather;
     try {
-      weather = await fetchWeatherForecast(prefs.homeLat, prefs.homeLon, prefs.owmApiKey);
+      weather = await fetchWeatherForecast(prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, windThreshold);
     } catch (fetchErr) {
       console.error('[BackgroundTask] Weather fetch failed, retrying:', fetchErr);
       return BackgroundFetch.BackgroundFetchResult.Failed; // OS will retry
     }
 
-    const windKmh = weather.hourly[0]
-      ? windMsToKmh(weather.hourly[0].wind_speed)
-      : undefined;
+    const windKmh = weather.hourly[0]?.wind_kph;
 
     for (const schedule of due) {
       await sendRunNotification(schedule.id, weather.verdict, weather.currentTemp, windKmh);
 
       await insertHistoryEntry({
         scheduleId: schedule.id,
-        date: new Date().toISOString().split('T')[0],
+        date: new Date().toISOString(),
         distanceKm: schedule.distanceKm,
         durationSec: 0,
         verdict: weather.verdict,

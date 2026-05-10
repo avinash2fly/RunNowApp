@@ -13,9 +13,8 @@ const DEFAULT_PREFS: UserPreferences = {
   notifyLeadMinutes: 30,
 };
 
-// Also store the OWM API key alongside preferences (not in types to keep types clean)
 interface FullPrefs extends UserPreferences {
-  owmApiKey: string;
+  weatherApiKey: string;
 }
 
 interface PreferencesContextValue {
@@ -25,13 +24,13 @@ interface PreferencesContextValue {
 }
 
 const PreferencesContext = createContext<PreferencesContextValue>({
-  prefs: { ...DEFAULT_PREFS, owmApiKey: '' },
+  prefs: { ...DEFAULT_PREFS, weatherApiKey: '' },
   updatePrefs: async () => {},
   isLoaded: false,
 });
 
 export function PreferencesProvider({ children }: { children: React.ReactNode }) {
-  const [prefs, setPrefs] = useState<FullPrefs>({ ...DEFAULT_PREFS, owmApiKey: '' });
+  const [prefs, setPrefs] = useState<FullPrefs>({ ...DEFAULT_PREFS, weatherApiKey: '' });
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {

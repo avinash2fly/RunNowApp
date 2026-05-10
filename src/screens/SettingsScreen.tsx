@@ -4,6 +4,7 @@ import {
   StyleSheet, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { Colors, Spacing, Radius, Typography, AccentOptions } from '../theme';
 import { usePreferences } from '../store/PreferencesContext';
 
@@ -12,10 +13,11 @@ export default function SettingsScreen() {
   const accent = prefs.accentColor ?? Colors.accent;
 
   const [city, setCity] = useState(prefs.homeCity ?? '');
-  const [apiKey, setApiKey] = useState((prefs as any).weatherApiKey ?? '');
+  const [apiKey, setApiKey] = useState(prefs.weatherApiKey ?? '');
   const [windThreshold, setWindThreshold] = useState(String(prefs.windThresholdKmh ?? 15));
   const [leadMinutes, setLeadMinutes] = useState(String(prefs.notifyLeadMinutes ?? 30));
   const [geocoding, setGeocoding] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   const handleGeocode = async () => {
     if (!city.trim()) return;
@@ -47,6 +49,30 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleUseCurrentLocation = async () => {
+    setLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Allow location access in your device settings to use this feature.');
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const { latitude, longitude } = loc.coords;
+
+      const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const name = place?.city || place?.subregion || place?.region || 'Current location';
+
+      await updatePrefs({ homeCity: name, homeLat: latitude, homeLon: longitude });
+      setCity(name);
+      Alert.alert('Location saved', `${name} (${latitude.toFixed(2)}, ${longitude.toFixed(2)})`);
+    } catch (err) {
+      Alert.alert('Error', 'Could not get current location. Please try again.');
+    } finally {
+      setLocating(false);
+    }
+  };
+
   const handleSavePrefs = async () => {
     const wind = parseFloat(windThreshold);
     const lead = parseInt(leadMinutes, 10);
@@ -56,7 +82,7 @@ export default function SettingsScreen() {
       windThresholdKmh: wind,
       notifyLeadMinutes: lead,
       weatherApiKey: apiKey.trim(),
-    } as any);
+    });
     Alert.alert('Saved', 'Preferences updated.');
   };
 
@@ -114,6 +140,16 @@ export default function SettingsScreen() {
               }
             </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            style={[styles.currentLocBtn, { borderColor: accent }]}
+            onPress={handleUseCurrentLocation}
+            disabled={locating}
+          >
+            {locating
+              ? <ActivityIndicator color={accent} size="small" />
+              : <Text style={[styles.currentLocText, { color: accent }]}>Use current location</Text>
+            }
+          </TouchableOpacity>
           {prefs.homeLat != null && (
             <Text style={styles.coordHint}>
               Saved: {prefs.homeLat?.toFixed(4)}, {prefs.homeLon?.toFixed(4)}
@@ -204,6 +240,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', minWidth: 68,
   },
   geoBtnText: { ...Typography.bodyBold, color: Colors.onAccent },
+  currentLocBtn: {
+    height: 44, borderRadius: Radius.md, borderWidth: 1.5,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  currentLocText: { ...Typography.bodyBold },
   coordHint: { ...Typography.small, color: Colors.onSurfaceVar },
   hint: { ...Typography.small, color: Colors.onSurfaceVar, lineHeight: 18 },
   saveBtn: { height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.sm },

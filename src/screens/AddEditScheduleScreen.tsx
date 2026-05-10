@@ -3,12 +3,14 @@ import {
   View, Text, TouchableOpacity, Switch, ScrollView,
   StyleSheet, Alert, Platform,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { usePreferences } from '../store/PreferencesContext';
 import { getScheduleById, insertSchedule, updateSchedule } from '../services/database';
+import { scheduleWeeklyRunNotification } from '../services/notifications';
 import { RunType, DayOfWeek } from '../types';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -83,11 +85,16 @@ export default function AddEditScheduleScreen() {
     };
 
     try {
+      let savedId: number;
       if (isEdit && scheduleId) {
         await updateSchedule({ ...scheduleData, id: scheduleId });
+        savedId = scheduleId;
       } else {
-        await insertSchedule(scheduleData);
+        const saved = await insertSchedule(scheduleData);
+        savedId = saved.id;
       }
+      const leadMinutes = prefs.notifyLeadMinutes ?? 30;
+      await scheduleWeeklyRunNotification(savedId, selectedDay, hour24(), minute, leadMinutes);
       navigation.goBack();
     } catch (err) {
       Alert.alert('Error', 'Could not save schedule. Please try again.');
@@ -101,6 +108,7 @@ export default function AddEditScheduleScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <StatusBar style="dark" />
       {/* Top bar */}
       <View style={styles.topBar}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -213,7 +221,7 @@ export default function AddEditScheduleScreen() {
             <NotifyRow
               icon="⏰"
               label={`Notify ${prefs.notifyLeadMinutes ?? 30} min ahead`}
-              sub="Early warning push"
+              sub="Early local notification"
               value={notifyAhead}
               onToggle={setNotifyAhead}
               accent={accent}

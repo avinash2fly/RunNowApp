@@ -14,7 +14,8 @@ export interface WeatherResult {
 export async function fetchWeatherForecast(
   lat: number,
   lon: number,
-  apiKey: string
+  apiKey: string,
+  windThresholdKph?: number
 ): Promise<WeatherResult> {
   const url = `${BASE_URL}?key=${apiKey}&q=${lat},${lon}&days=2&aqi=no&alerts=no`;
 
@@ -36,7 +37,7 @@ export async function fetchWeatherForecast(
   const currentTemp = hourly[0]?.temp_c ?? null;
 
   return {
-    verdict: evaluateVerdict(hourly),
+    verdict: evaluateVerdict(hourly, windThresholdKph),
     hourly,
     currentTemp,
   };
@@ -55,6 +56,18 @@ export function evaluateVerdict(hourly: HourlyWeather[], windThresholdKph = WIND
   if (hasRain || hasSnow || hasHighWind) return 'BAD';
   if (hasHighPop) return 'MARGINAL';
   return 'GOOD';
+}
+
+export async function fetchAllHourly(
+  lat: number,
+  lon: number,
+  apiKey: string
+): Promise<HourlyWeather[]> {
+  const url = `${BASE_URL}?key=${apiKey}&q=${lat},${lon}&days=2&aqi=no&alerts=no`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`WeatherAPI error: ${response.status}`);
+  const data = await response.json();
+  return (data.forecast?.forecastday ?? []).flatMap((day: any) => day.hour);
 }
 
 export function formatTemp(celsius: number): string {

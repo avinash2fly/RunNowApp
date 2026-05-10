@@ -89,6 +89,61 @@ export async function sendRunNotification(
   });
 }
 
+export async function scheduleWeeklyRunNotification(
+  scheduleId: number,
+  dayOfWeek: number,
+  hour: number,
+  minute: number,
+  leadMinutes: number
+): Promise<void> {
+  const identifier = `schedule-${scheduleId}`;
+  await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
+
+  let notifyMinute = minute - leadMinutes;
+  let notifyHour = hour;
+  let notifyDay = dayOfWeek;
+
+  while (notifyMinute < 0) {
+    notifyMinute += 60;
+    notifyHour -= 1;
+  }
+  if (notifyHour < 0) {
+    notifyHour += 24;
+    notifyDay = (notifyDay - 1 + 7) % 7;
+  }
+
+  const contentObj: any = {
+    title: 'Upcoming run',
+    body: 'Open RunNow to check weather conditions before your run.',
+    data: { scheduleId },
+  };
+
+  if (Platform.OS === 'android') {
+    contentObj.channelId = CHANNEL_ID;
+  }
+
+  const trigger: any = {
+    type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+    weekday: notifyDay + 1,
+    hour: notifyHour,
+    minute: notifyMinute,
+  };
+
+  if (Platform.OS === 'android') {
+    trigger.channelId = CHANNEL_ID;
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    identifier,
+    content: contentObj,
+    trigger,
+  });
+}
+
+export async function cancelScheduleNotification(scheduleId: number): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(`schedule-${scheduleId}`).catch(() => {});
+}
+
 export async function cancelScheduledNotifications(): Promise<void> {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }

@@ -100,14 +100,15 @@ function Metric({ label, value, accent, highlighted }: {
 
 function HistoryRow({ entry, accent }: { entry: RunHistoryEntry; accent: string }) {
   const icon = VERDICT_ICON[entry.verdict as WeatherVerdict] ?? '❓';
-  const dateStr = new Date(entry.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  const durationMin = Math.round(entry.durationSec / 60);
+  const d = new Date(entry.date);
+  const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
   return (
     <View style={styles.historyRow}>
       <Text style={{ fontSize: 24 }}>{icon}</Text>
       <View style={{ flex: 1 }}>
-        <Text style={styles.historyDist}>{entry.distanceKm} km · {durationMin > 0 ? `${durationMin} min` : '—'}</Text>
+        <Text style={styles.historyDist}>{entry.distanceKm} km</Text>
         <Text style={styles.historyDate}>{dateStr}</Text>
       </View>
       {entry.completed && (

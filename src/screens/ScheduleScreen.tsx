@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { usePreferences } from '../store/PreferencesContext';
 import { getAllSchedules, deleteSchedule, setScheduleEnabled } from '../services/database';
+import { scheduleWeeklyRunNotification, cancelScheduleNotification } from '../services/notifications';
 import { VerdictChip } from '../components/VerdictChip';
 import { RunSchedule } from '../types';
 import type { RootStackParamList } from '../navigation/AppNavigator';
@@ -37,6 +38,15 @@ export default function ScheduleScreen() {
 
   const handleToggle = async (id: number, value: boolean) => {
     await setScheduleEnabled(id, value);
+    const schedule = schedules.find(s => s.id === id);
+    if (schedule) {
+      if (value) {
+        const leadMinutes = prefs.notifyLeadMinutes ?? 30;
+        await scheduleWeeklyRunNotification(id, schedule.dayOfWeek, schedule.hour, schedule.minute, leadMinutes);
+      } else {
+        await cancelScheduleNotification(id);
+      }
+    }
     setSchedules(prev => prev.map(s => s.id === id ? { ...s, isEnabled: value } : s));
   };
 
@@ -45,6 +55,7 @@ export default function ScheduleScreen() {
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive', onPress: async () => {
+          await cancelScheduleNotification(id);
           await deleteSchedule(id);
           setSchedules(prev => prev.filter(s => s.id !== id));
         },
