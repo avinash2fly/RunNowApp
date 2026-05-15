@@ -1,23 +1,25 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator,
-  StyleSheet, RefreshControl, Platform, Alert,
+  StyleSheet, RefreshControl, Alert,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors, Spacing, Radius, Typography } from '../theme';
-import { usePreferences } from '../store/PreferencesContext';
-import { getEnabledSchedules } from '../services/database';
-import { fetchWeatherForecast, fetchAllHourly, evaluateVerdict, formatTemp } from '../services/weather';
+import { usePreferences, useTokens } from '../store/PreferencesContext';
+import { getEnabledSchedules, insertHistoryEntry } from '../services/database';
+import { fetchWeatherForecast, weatherConditionToIcon } from '../services/weather';
 import { sendRunNotification } from '../services/notifications';
-import { insertHistoryEntry } from '../services/database';
 import { VerdictChip } from '../components/VerdictChip';
 import { ForecastBar } from '../components/ForecastBar';
-import { WeatherIcon } from '../components/WeatherIcon';
+import { Icon, IconName } from '../components/Icon';
 import { Card } from '../components/Card';
-import { RunSchedule, HourlyWeather, WeatherVerdict } from '../types';
+import { TopBar } from '../components/TopBar';
+import { FAB } from '../components/FAB';
+import { SectionTitle } from '../components/SectionTitle';
+import { HourlyWeather, WeatherVerdict } from '../types';
 import type { RootStackParamList } from '../navigation/AppNavigator';
+import { nextRun as computeNextRun, nextRunCountdown } from '../utils/scheduling';
 
 type Nav = StackNavigationProp<RootStackParamList>;
 
@@ -28,42 +30,22 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-function nextRunCountdown(schedules: RunSchedule[]): string {
-  if (!schedules.length) return 'No runs scheduled';
-
-  const now = new Date();
-  const candidates: number[] = [];
-
-  for (const s of schedules) {
-    const candidate = new Date(now);
-    const daysAhead = (s.dayOfWeek - now.getDay() + 7) % 7;
-    candidate.setDate(now.getDate() + daysAhead);
-    candidate.setHours(s.hour, s.minute, 0, 0);
-    if (candidate <= now) candidate.setDate(candidate.getDate() + 7);
-    candidates.push(candidate.getTime());
-  }
-
-  const diff = Math.min(...candidates) - now.getTime();
-  const totalMin = Math.ceil(diff / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-
-  if (h > 24) {
-    const d = Math.floor(h / 24);
-    return `Your next run is in ${d} day${d !== 1 ? 's' : ''}`;
-  }
-  if (h > 0) return `Your run window opens in ${h} hr ${m} min`;
-  return `Your run starts in ${m} min`;
+function formatHHMM(date: Date): string {
+  const h = date.getHours();
+  const m = date.getMinutes();
+  const ampm = h < 12 ? 'AM' : 'PM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
+  const tk = useTokens();
   const { prefs } = usePreferences();
-  const [schedules, setSchedules] = useState<RunSchedule[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
   const [hourly, setHourly] = useState<HourlyWeather[]>([]);
   const [verdict, setVerdict] = useState<WeatherVerdict>('UNKNOWN');
   const [currentTemp, setCurrentTemp] = useState<number | null>(null);
-  const [allHourly, setAllHourly] = useState<HourlyWeather[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -75,20 +57,19 @@ export default function HomeScreen() {
       setSchedules(enabled);
 
       const apiKey = prefs.weatherApiKey;
-      if (prefs.homeLat && prefs.homeLon && apiKey) {
+      if (prefs.homeLat != null && prefs.homeLon != null && apiKey) {
         try {
-          const result = await fetchWeatherForecast(prefs.homeLat, prefs.homeLon, apiKey);
+          const result = await fetchWeatherForecast(
+            prefs.homeLat, prefs.homeLon, apiKey, prefs.windThresholdKmh
+          );
           setHourly(result.hourly);
           setVerdict(result.verdict);
           setCurrentTemp(result.currentTemp);
-          const all = await fetchAllHourly(prefs.homeLat, prefs.homeLon, apiKey);
-          setAllHourly(all);
         } catch (fetchErr) {
           console.error('[HomeScreen] weather fetch error', fetchErr);
           setHourly([]);
           setVerdict('UNKNOWN');
           setCurrentTemp(null);
-          setAllHourly([]);
         }
       }
     } catch (err) {
@@ -103,8 +84,10 @@ export default function HomeScreen() {
 
   const onRefresh = () => { setRefreshing(true); loadData(true); };
 
+  const nextRun = useMemo(() => computeNextRun(schedules), [schedules]);
+
   const handleCheckNow = async () => {
-    if (!prefs.homeLat || !prefs.homeLon || !prefs.weatherApiKey) {
+    if (prefs.homeLat == null || prefs.homeLon == null || !prefs.weatherApiKey) {
       Alert.alert('Setup needed', 'Set your home location and API key in Settings first.');
       return;
     }
@@ -136,246 +119,247 @@ export default function HomeScreen() {
     }
   };
 
-  const nextRun = useMemo(() => {
-    if (!schedules.length) return null;
-    const now = new Date();
-    let best: { schedule: RunSchedule; time: number } | null = null;
-    for (const s of schedules) {
-      const candidate = new Date(now);
-      const daysAhead = (s.dayOfWeek - now.getDay() + 7) % 7;
-      candidate.setDate(now.getDate() + daysAhead);
-      candidate.setHours(s.hour, s.minute, 0, 0);
-      if (candidate <= now) candidate.setDate(candidate.getDate() + 7);
-      if (!best || candidate.getTime() < best.time) {
-        best = { schedule: s, time: candidate.getTime() };
-      }
-    }
-    return best;
-  }, [schedules]);
-
-  const runIsWithinForecast = nextRun
-    ? (nextRun.time - Date.now()) < 2 * 24 * 60 * 60 * 1000
-    : false;
-
-  const runWindowHourly = useMemo(() => {
-    if (!nextRun || !runIsWithinForecast || !allHourly.length) return [];
-    const target = nextRun.schedule.hour;
-    const targetDay = nextRun.schedule.dayOfWeek;
-    const windowHours: number[] = [];
-    for (let offset = -2; offset <= 2; offset++) {
-      windowHours.push((target + offset + 24) % 24);
-    }
-    const forDay = allHourly.filter(h => {
-      const d = new Date(h.time_epoch * 1000);
-      return windowHours.includes(d.getHours()) && d.getDay() === targetDay;
-    });
-    const seen = new Set<number>();
-    return forDay.filter(h => {
-      const hod = new Date(h.time_epoch * 1000).getHours();
-      if (seen.has(hod)) return false;
-      seen.add(hod);
-      return true;
-    }).sort((a, b) => {
-      const aIdx = windowHours.indexOf(new Date(a.time_epoch * 1000).getHours());
-      const bIdx = windowHours.indexOf(new Date(b.time_epoch * 1000).getHours());
-      return aIdx - bIdx;
-    });
-  }, [nextRun, runIsWithinForecast, allHourly]);
-
-  const verdictBg: Record<WeatherVerdict, string> = {
-    GOOD: Colors.goSoft, MARGINAL: Colors.waitSoft, BAD: Colors.skipSoft, UNKNOWN: Colors.surface2,
-  };
-  const verdictText: Record<WeatherVerdict, string> = {
-    GOOD: Colors.onGoSoft, MARGINAL: Colors.onWaitSoft, BAD: Colors.onSkipSoft, UNKNOWN: Colors.onSurfaceVar,
-  };
-
-  const tipText: Record<WeatherVerdict, string> = {
-    GOOD: 'All four hours look great. Perfect conditions ahead — enjoy the run!',
-    MARGINAL: 'Some chance of rain but nothing certain. Light layers recommended.',
-    BAD: 'Rough conditions for the next 4 hours. Best to rest up today.',
-    UNKNOWN: 'Weather data not available. Set your home location in Settings.',
-  };
-
-  const tipIcon: Record<WeatherVerdict, string> = {
-    GOOD: '✅', MARGINAL: '⚠️', BAD: '🚫', UNKNOWN: '❓',
-  };
-
-  const accent = prefs.accentColor ?? Colors.accent;
+  const condition = hourly[0]?.condition;
   const windKmh = hourly[0] ? Math.round(hourly[0].wind_kph) : null;
   const pop = hourly[0] ? hourly[0].chance_of_rain : null;
+  const conditionIcon: IconName = weatherConditionToIcon(condition?.code);
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator color={accent} size="large" />
+      <SafeAreaView style={[styles.centered, { backgroundColor: tk.surface }]}>
+        <ActivityIndicator color={tk.accent} size="large"/>
       </SafeAreaView>
     );
   }
 
+  const countdownText = nextRunCountdown(schedules);
+  const isWindowOpening = countdownText.startsWith('Your run window');
+  const isStartsIn = countdownText.startsWith('Your run starts');
+  const isNextRun = countdownText.startsWith('Your next');
+  let leadText = countdownText;
+  let timeHighlight = '';
+  if (isWindowOpening) {
+    const match = countdownText.match(/in (.+)$/);
+    leadText = 'Your run window\nopens in ';
+    timeHighlight = match?.[1] ?? '';
+  } else if (isStartsIn) {
+    const match = countdownText.match(/in (.+)$/);
+    leadText = 'Your run starts in ';
+    timeHighlight = match?.[1] ?? '';
+  } else if (isNextRun) {
+    const match = countdownText.match(/in (.+)$/);
+    leadText = 'Your next run is in ';
+    timeHighlight = match?.[1] ?? '';
+  }
+
+  const verdictHeroBg = verdict === 'UNKNOWN' ? tk.surface1 : tk.accentSoft;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: tk.surface }]} edges={['top', 'left', 'right']}>
+      <View style={{ paddingHorizontal: 16 }}>
+        <TopBar leading="avatar" trailing="bell"/>
+      </View>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={tk.accent}/>}
       >
-        {/* Top bar */}
-        <View style={styles.topBar}>
-          <Text style={styles.avatar}>🏃</Text>
+        {/* Greeting */}
+        <View style={{ paddingHorizontal: 4 }}>
+          <Text style={[styles.greeting, { color: tk.onSurfaceVar }]}>{getGreeting()}</Text>
+          <Text style={[styles.countdown, { color: tk.onSurface }]}>
+            {leadText}
+            {timeHighlight ? <Text style={{ color: tk.accent }}>{timeHighlight}</Text> : null}
+          </Text>
         </View>
 
-        {/* Greeting */}
-        <Text style={styles.greeting}>{getGreeting()}</Text>
-        <Text style={[styles.countdown, { color: accent }]}>{nextRunCountdown(schedules)}</Text>
-
         {/* Verdict hero card */}
-        <Card tone="surface1" style={[styles.heroCard, { backgroundColor: verdictBg[verdict] }]}>
-          <VerdictChip verdict={verdict} />
-          <View style={styles.heroRow}>
-            <Text style={[styles.heroTemp, { color: verdictText[verdict] }]}>
-              {currentTemp != null ? formatTemp(currentTemp) : '--'}
-            </Text>
-            <WeatherIcon conditionCode={hourly[0]?.condition?.code} size={56} />
-          </View>
-          <View style={styles.statsRow}>
-            <StatPill label="Wind" value={windKmh != null ? `${windKmh} km/h` : '--'} color={verdictText[verdict]} />
-            <StatPill label="Rain" value={pop != null ? `${pop}%` : '--'} color={verdictText[verdict]} />
-            {schedules[0] && (
-              <StatPill label="Type" value={schedules[0].runType} color={verdictText[verdict]} />
-            )}
-          </View>
-          {schedules[0] && (
-            <View style={[styles.runDetailRow, { borderTopColor: 'rgba(0,0,0,0.08)' }]}>
-              <Text style={{ fontSize: 16 }}>🏃</Text>
-              <Text style={[styles.runDetailText, { color: verdictText[verdict] }]}>
-                Today's run · {schedules[0].distanceKm}K {schedules[0].runType}
+        <View style={[styles.hero, { backgroundColor: verdictHeroBg }]}>
+          <View style={{ padding: 20, paddingBottom: 4 }}>
+            <VerdictChip verdict={verdict}/>
+            <View style={styles.heroRow}>
+              <Text style={[styles.heroTemp, { color: tk.onSurface }]}>
+                {currentTemp != null ? `${Math.round(currentTemp)}°` : '--'}
               </Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={[styles.heroCondition, { color: tk.onSurface }]} numberOfLines={1}>
+                  {condition?.text ?? 'Set up weather'}
+                </Text>
+                {windKmh != null && (
+                  <Text style={[styles.heroSub, { color: tk.onAccentSoft }]} numberOfLines={1}>
+                    Feels like {currentTemp != null ? Math.round(currentTemp) : '--'}°
+                  </Text>
+                )}
+              </View>
+              <Icon name={conditionIcon} size={56} color={tk.accent}/>
             </View>
-          )}
-        </Card>
-
-        {/* Forecast */}
-        {hourly.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>NEXT 4 HOURS</Text>
-            <ForecastBar hourly={hourly} activeIndex={0} />
+            <View style={[styles.statsRow, { borderTopColor: tk.outline }]}>
+              <Stat icon="wind" label="WIND"  value={windKmh != null ? `${windKmh} km/h` : '--'}/>
+              <Stat icon="drop" label="RAIN"  value={pop != null ? `${pop}%` : '--'}/>
+              <Stat icon="bolt" label="VERDICT" value={verdict === 'GOOD' ? 'Go' : verdict === 'MARGINAL' ? 'Wait' : verdict === 'BAD' ? 'Skip' : '—'}/>
+            </View>
           </View>
-        )}
 
-        {/* Weather around run time */}
-        {runWindowHourly.length > 0 && nextRun && (
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>WEATHER AROUND RUN TIME</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.runWeatherRow}>
-              {runWindowHourly.map(h => {
-                const hod = new Date(h.time_epoch * 1000).getHours();
-                const label = hod === 0 ? '12 AM' : hod < 12 ? `${hod} AM` : hod === 12 ? '12 PM' : `${hod - 12} PM`;
-                const isRunHour = hod === nextRun.schedule.hour;
-                const slotVerdict = evaluateVerdict([h], prefs.windThresholdKmh ?? 15);
-                const dotColor = slotVerdict === 'GOOD' ? Colors.go : slotVerdict === 'BAD' ? Colors.skip : Colors.wait;
-                return (
-                  <View key={h.time_epoch} style={[styles.runWeatherCard, isRunHour && { backgroundColor: Colors.accentSoft }]}>
-                    <Text style={[styles.runWeatherTime, isRunHour && { color: Colors.onAccentSoft }]}>{label}</Text>
-                    <WeatherIcon conditionCode={h.condition?.code} size={22} />
-                    <Text style={styles.runWeatherTemp}>{Math.round(h.temp_c)}°</Text>
-                    <View style={styles.runWeatherWindRow}>
-                      <View style={[styles.runWeatherDot, { backgroundColor: dotColor }]} />
-                      <Text style={styles.runWeatherWind}>{Math.round(h.wind_kph)}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
+          {/* Inset run row */}
+          {nextRun && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('AddEditSchedule', { scheduleId: nextRun.schedule.id })}
+              style={[styles.runRow, { backgroundColor: tk.surface }]}
+            >
+              <View style={[styles.runIcon, { backgroundColor: tk.accent }]}>
+                <Icon name="run" size={22} color={tk.onAccent}/>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.runTitle, { color: tk.onSurface }]} numberOfLines={1}>
+                  {nextRunLabel(nextRun.time)} · {nextRun.schedule.distanceKm}K {nextRun.schedule.runType.toLowerCase()}
+                </Text>
+                <Text style={[styles.runSub, { color: tk.onSurfaceVar }]} numberOfLines={1}>
+                  {formatHHMM(new Date(nextRun.time))}
+                </Text>
+              </View>
+              <Icon name="chevron" size={18} color={tk.onSurfaceVar}/>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 4-hour forecast */}
+        {hourly.length > 0 && (
+          <View>
+            <SectionTitle title="Next 4 hours"/>
+            <ForecastBar hourly={hourly} activeIndex={0}/>
           </View>
         )}
 
         {/* Tip card */}
-        <Card tone="surface2" style={styles.tipCard}>
-          <View style={styles.tipRow}>
-            <Text style={{ fontSize: 20 }}>{tipIcon[verdict]}</Text>
-            <Text style={styles.tipText}>{tipText[verdict]}</Text>
+        <Card tone="surface1" style={styles.tipCard}>
+          <View style={[styles.tipIcon, { backgroundColor: tipBg(verdict, tk) }]}>
+            <Icon name={tipIconName(verdict)} size={20} color={tipFg(verdict, tk)}/>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.tipTitle, { color: tk.onSurface }]}>{tipTitle(verdict)}</Text>
+            <Text style={[styles.tipBody, { color: tk.onSurfaceVar }]}>{tipBody(verdict, windKmh)}</Text>
           </View>
         </Card>
 
-        {/* Manual weather check + notification */}
-        <TouchableOpacity
-          style={[styles.checkNowBtn, { borderColor: accent }]}
-          onPress={handleCheckNow}
-          disabled={checking}
-          activeOpacity={0.85}
-        >
-          {checking
-            ? <ActivityIndicator color={accent} size="small" />
-            : <Text style={[styles.checkNowText, { color: accent }]}>Check Now</Text>
-          }
-        </TouchableOpacity>
+        {/* Start run + check buttons */}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.startBtn, { backgroundColor: tk.accent }]}
+            onPress={() => navigation.navigate('RunReady', { scheduleId: nextRun?.schedule.id })}
+          >
+            <Icon name="play" size={20} color={tk.onAccent}/>
+            <Text style={[styles.startBtnText, { color: tk.onAccent }]}>Start run</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.checkBtn, { borderColor: tk.outlineStrong }]}
+            onPress={handleCheckNow}
+            disabled={checking}
+          >
+            {checking
+              ? <ActivityIndicator color={tk.accent} size="small"/>
+              : <Text style={[styles.checkBtnText, { color: tk.onSurface }]}>Check now</Text>
+            }
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: accent }]}
-        onPress={() => navigation.navigate('AddEditSchedule', {})}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.fabText}>+ Schedule</Text>
-      </TouchableOpacity>
+      <FAB label="Schedule" onPress={() => navigation.navigate('AddEditSchedule', {})}/>
     </SafeAreaView>
   );
 }
 
-function StatPill({ label, value, color }: { label: string; value: string; color: string }) {
+function Stat({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+  const tk = useTokens();
   return (
-    <View style={styles.statPill}>
-      <Text style={[styles.statLabel, { color }]}>{label}</Text>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
+    <View style={{ flex: 1, gap: 3 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+        <Icon name={icon} size={13} color={tk.onSurfaceVar}/>
+        <Text style={{ color: tk.onSurfaceVar, fontSize: 11, fontWeight: '600', letterSpacing: 0.4 }}>
+          {label}
+        </Text>
+      </View>
+      <Text style={{ color: tk.onSurface, fontSize: 15, fontWeight: '600' }}>{value}</Text>
     </View>
   );
 }
 
+function nextRunLabel(runTimeMs: number, now: Date = new Date()): string {
+  const run = new Date(runTimeMs);
+  if (run.toDateString() === now.toDateString()) return "Today's run";
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (run.toDateString() === tomorrow.toDateString()) return "Tomorrow's run";
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `${dayNames[run.getDay()]}'s run`;
+}
+
+function tipTitle(v: WeatherVerdict): string {
+  return {
+    GOOD: 'All four hours look great',
+    MARGINAL: 'Watch the sky',
+    BAD: 'Best to rest today',
+    UNKNOWN: 'Weather not configured',
+  }[v];
+}
+
+function tipBody(v: WeatherVerdict, windKmh: number | null): string {
+  const wind = windKmh != null ? `wind under ${windKmh + 1} km/h` : 'light winds';
+  return {
+    GOOD: `No rain, ${wind}. We'll ping you 30 min before your window opens.`,
+    MARGINAL: 'Some chance of rain. Pack light layers and a cap, just in case.',
+    BAD: 'Rough conditions for the next 4 hours. Try indoor cross-training.',
+    UNKNOWN: 'Set your home location and WeatherAPI key in Settings to get forecasts.',
+  }[v];
+}
+
+function tipBg(v: WeatherVerdict, tk: ReturnType<typeof useTokens>): string {
+  return v === 'GOOD' ? tk.goSoft : v === 'MARGINAL' ? tk.waitSoft : v === 'BAD' ? tk.skipSoft : tk.surface2;
+}
+
+function tipFg(v: WeatherVerdict, tk: ReturnType<typeof useTokens>): string {
+  return v === 'GOOD' ? tk.go : v === 'MARGINAL' ? tk.wait : v === 'BAD' ? tk.skip : tk.onSurfaceVar;
+}
+
+function tipIconName(v: WeatherVerdict): IconName {
+  return v === 'GOOD' ? 'check' : v === 'MARGINAL' ? 'history' : v === 'BAD' ? 'rain' : 'bell';
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.surface },
-  centered: { flex: 1, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
-  scroll: { padding: Spacing.lg, paddingBottom: 100, gap: Spacing.lg },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  avatar: { fontSize: 28 },
-  greeting: { ...Typography.h1, color: Colors.onSurface },
-  countdown: { ...Typography.body, marginTop: 2 },
-  heroCard: { borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.sm },
-  heroRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroTemp: { fontSize: 64, fontWeight: '700', letterSpacing: -2 },
-  statsRow: { flexDirection: 'row', gap: Spacing.md, flexWrap: 'wrap' },
-  statPill: { gap: 1 },
-  statLabel: { ...Typography.micro },
-  statValue: { ...Typography.bodyBold },
-  runDetailRow: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    borderTopWidth: 1, paddingTop: Spacing.sm, marginTop: Spacing.xs,
+  safe: { flex: 1 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  scroll: { paddingHorizontal: 16, paddingBottom: 120, gap: 14 },
+  greeting: { fontSize: 14, fontWeight: '500', letterSpacing: 0.2 },
+  countdown: { fontSize: 28, fontWeight: '700', lineHeight: 32, letterSpacing: -0.6, marginTop: 2 },
+  hero: { borderRadius: 24, overflow: 'hidden' },
+  heroRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
+  heroTemp: { fontSize: 60, fontWeight: '700', letterSpacing: -2 },
+  heroCondition: { fontSize: 15, fontWeight: '600' },
+  heroSub: { fontSize: 13, opacity: 0.85, marginTop: 2 },
+  statsRow: {
+    flexDirection: 'row', gap: 10, marginTop: 14, paddingTop: 14,
+    borderTopWidth: 1,
   },
-  runDetailText: { ...Typography.body },
-  section: { gap: Spacing.sm },
-  sectionLabel: { ...Typography.label, color: Colors.onSurfaceVar },
-  tipCard: {},
-  tipRow: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start' },
-  tipText: { ...Typography.body, color: Colors.onSurface, flex: 1 },
-  fab: {
-    position: 'absolute', right: Spacing.lg, bottom: Spacing.xl,
-    height: 56, borderRadius: Radius.md, paddingHorizontal: Spacing.xl,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 }, android: { elevation: 6 } }),
+  runRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    margin: 6, padding: 12, borderRadius: 18,
   },
-  fabText: { ...Typography.bodyBold, color: Colors.onAccent },
-  checkNowBtn: {
-    height: 48, borderRadius: Radius.md, borderWidth: 1.5,
+  runIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  runTitle: { fontSize: 15, fontWeight: '600' },
+  runSub: { fontSize: 13, marginTop: 2 },
+  tipCard: { flexDirection: 'row', gap: 14, alignItems: 'flex-start' },
+  tipIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  tipTitle: { fontSize: 14, fontWeight: '600' },
+  tipBody: { fontSize: 13, marginTop: 2, lineHeight: 18 },
+  startBtn: {
+    flex: 1.4, height: 48, borderRadius: 24,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  startBtnText: { fontSize: 14, fontWeight: '700' },
+  checkBtn: {
+    flex: 1, height: 48, borderRadius: 24, borderWidth: 1.5,
     alignItems: 'center', justifyContent: 'center',
   },
-  checkNowText: { ...Typography.bodyBold },
-  runWeatherRow: { gap: Spacing.sm, paddingHorizontal: 2 },
-  runWeatherCard: {
-    width: 72, backgroundColor: Colors.surface2, borderRadius: Radius.md,
-    alignItems: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.xs, gap: 4,
-  },
-  runWeatherTime: { ...Typography.micro, color: Colors.onSurfaceVar },
-  runWeatherTemp: { ...Typography.bodyBold, color: Colors.onSurface },
-  runWeatherWindRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  runWeatherDot: { width: 6, height: 6, borderRadius: 3 },
-  runWeatherWind: { ...Typography.micro, color: Colors.onSurfaceVar },
+  checkBtnText: { fontSize: 14, fontWeight: '600' },
 });

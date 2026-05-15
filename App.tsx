@@ -7,12 +7,17 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { PreferencesProvider } from './src/store/PreferencesContext';
+import { PreferencesProvider, useTokens } from './src/store/PreferencesContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { initializeNotifications, requestNotificationPermission, addNotificationResponseListener, sendRunNotification } from './src/services/notifications';
 import { registerBackgroundTask } from './src/services/backgroundTask';
 import { getScheduleById, insertHistoryEntry } from './src/services/database';
 import { fetchWeatherForecast } from './src/services/weather';
+
+function ThemedStatusBar() {
+  const tk = useTokens();
+  return <StatusBar style={tk.isDark ? 'light' : 'dark'} />;
+}
 
 export default function App() {
   useEffect(() => {
@@ -24,14 +29,25 @@ export default function App() {
 
     setup();
 
-    const handleScheduleNotification = async (scheduleId: number) => {
+    // Avoid handling the same notification twice (received + response fire for the same one).
+    const processed = new Set<string>();
+
+    const handleScheduleNotification = async (notificationId: string, scheduleId: number) => {
+      if (processed.has(notificationId)) return;
+      processed.add(notificationId);
+      // Cap memory; we don't need long-term dedupe.
+      if (processed.size > 50) {
+        const first = processed.values().next().value;
+        if (first) processed.delete(first);
+      }
+
       try {
         const schedule = await getScheduleById(scheduleId);
         if (!schedule) return;
 
         const raw = await AsyncStorage.getItem('@runnow_prefs');
         const prefs = raw ? JSON.parse(raw) : null;
-        if (!prefs?.homeLat || !prefs?.homeLon || !prefs?.weatherApiKey) return;
+        if (prefs?.homeLat == null || prefs?.homeLon == null || !prefs?.weatherApiKey) return;
 
         const weather = await fetchWeatherForecast(
           prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh
@@ -56,7 +72,7 @@ export default function App() {
       const data = notification.request.content.data;
       const id = notification.request.identifier;
       if (id.startsWith('schedule-') && data?.scheduleId) {
-        handleScheduleNotification(data.scheduleId as number);
+        handleScheduleNotification(id, data.scheduleId as number);
       }
     });
 
@@ -64,7 +80,7 @@ export default function App() {
       const data = response.notification.request.content.data;
       const id = response.notification.request.identifier;
       if (id.startsWith('schedule-') && data?.scheduleId) {
-        handleScheduleNotification(data.scheduleId as number);
+        handleScheduleNotification(id, data.scheduleId as number);
       }
     });
 
@@ -80,7 +96,7 @@ export default function App() {
         <PreferencesProvider>
           <NavigationContainer>
             <AppNavigator />
-            <StatusBar style="dark" />
+            <ThemedStatusBar />
           </NavigationContainer>
         </PreferencesProvider>
       </SafeAreaProvider>

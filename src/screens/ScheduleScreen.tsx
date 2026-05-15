@@ -1,17 +1,21 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, Switch,
-  StyleSheet, Platform, Alert,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors, Spacing, Radius, Typography } from '../theme';
-import { usePreferences } from '../store/PreferencesContext';
+import { useTokens } from '../store/PreferencesContext';
 import { getAllSchedules, deleteSchedule, setScheduleEnabled } from '../services/database';
-import { scheduleWeeklyRunNotification, cancelScheduleNotification } from '../services/notifications';
+import { cancelScheduleNotification, scheduleWeeklyRunNotification } from '../services/notifications';
+import { usePreferences } from '../store/PreferencesContext';
 import { VerdictChip } from '../components/VerdictChip';
+import { Card } from '../components/Card';
+import { Icon } from '../components/Icon';
+import { FAB } from '../components/FAB';
+import { SectionTitle } from '../components/SectionTitle';
 import { RunSchedule } from '../types';
+import { nextRun as computeNextRun } from '../utils/scheduling';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 type Nav = StackNavigationProp<RootStackParamList>;
@@ -24,17 +28,60 @@ function formatTime(hour: number, minute: number): string {
   return `${h}:${String(minute).padStart(2, '0')} ${ampm}`;
 }
 
+function monthName(m: number): string {
+  return ['January','February','March','April','May','June','July','August','September','October','November','December'][m];
+}
+
 export default function ScheduleScreen() {
   const navigation = useNavigation<Nav>();
+  const tk = useTokens();
   const { prefs } = usePreferences();
   const [schedules, setSchedules] = useState<RunSchedule[]>([]);
-  const accent = prefs.accentColor ?? Colors.accent;
 
   useFocusEffect(
     useCallback(() => {
       getAllSchedules().then(setSchedules);
     }, [])
   );
+
+  const enabled = useMemo(() => schedules.filter(s => s.isEnabled), [schedules]);
+
+  // Build a week strip relative to today.
+  const week = useMemo(() => {
+    const today = new Date();
+    const result: { day: string; date: number; today: boolean; scheduled: boolean; jsDate: Date }[] = [];
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(startOfWeek.getDate() + i);
+      result.push({
+        day: DAY_LABELS[d.getDay()],
+        date: d.getDate(),
+        today: d.toDateString() === today.toDateString(),
+        scheduled: enabled.some(s => s.dayOfWeek === d.getDay()),
+        jsDate: d,
+      });
+    }
+    return result;
+  }, [enabled]);
+
+  const next = useMemo(() => computeNextRun(enabled), [enabled]);
+
+  const upcoming = useMemo(() => {
+    const now = new Date();
+    return enabled
+      .map(s => {
+        const candidate = new Date(now);
+        const daysAhead = (s.dayOfWeek - now.getDay() + 7) % 7;
+        candidate.setDate(now.getDate() + daysAhead);
+        candidate.setHours(s.hour, s.minute, 0, 0);
+        if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 7);
+        return { schedule: s, when: candidate };
+      })
+      .sort((a, b) => a.when.getTime() - b.when.getTime())
+      .filter(x => !next || x.schedule.id !== next.schedule.id);
+  }, [enabled, next]);
 
   const handleToggle = async (id: number, value: boolean) => {
     await setScheduleEnabled(id, value);
@@ -63,91 +110,214 @@ export default function ScheduleScreen() {
     ]);
   };
 
-  const renderItem = ({ item }: { item: RunSchedule }) => (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => navigation.navigate('AddEditSchedule', { scheduleId: item.id })}
-      onLongPress={() => handleDelete(item.id)}
-      activeOpacity={0.85}
-    >
-      <View style={[styles.dateBadge, { backgroundColor: item.isEnabled ? Colors.goSoft : Colors.surface3 }]}>
-        <Text style={[styles.dayText, { color: item.isEnabled ? Colors.onGoSoft : Colors.onSurfaceVar }]}>
-          {DAY_LABELS[item.dayOfWeek]}
-        </Text>
-      </View>
-      <View style={styles.cardBody}>
-        <Text style={styles.timeText}>{formatTime(item.hour, item.minute)}</Text>
-        <Text style={styles.detailText}>{item.distanceKm} km · {item.runType}</Text>
-      </View>
-      <Switch
-        value={item.isEnabled}
-        onValueChange={v => handleToggle(item.id, v)}
-        trackColor={{ false: Colors.surface3, true: accent + '66' }}
-        thumbColor={item.isEnabled ? accent : Colors.onSurfaceVar}
-      />
-    </TouchableOpacity>
-  );
+  const now = new Date();
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: tk.surface }]} edges={['top', 'left', 'right']}>
       <View style={styles.topBar}>
-        <Text style={styles.title}>Schedule</Text>
+        <View>
+          <Text style={[styles.month, { color: tk.onSurfaceVar }]}>
+            {monthName(now.getMonth()).toUpperCase()} {now.getFullYear()}
+          </Text>
+          <Text style={[styles.title, { color: tk.onSurface }]}>This week</Text>
+        </View>
+        <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('AddEditSchedule', {})}>
+          <Icon name="plus" size={22} color={tk.onSurface}/>
+        </TouchableOpacity>
       </View>
 
-      {schedules.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyIcon}>📅</Text>
-          <Text style={styles.emptyText}>No schedules yet</Text>
-          <Text style={styles.emptyHint}>Tap + Schedule to add your first run</Text>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        {/* Week strip */}
+        <View style={styles.weekRow}>
+          {week.map((w, i) => {
+            const bg = w.today ? tk.accent : tk.surface2;
+            const fg = w.today ? tk.onAccent : tk.onSurface;
+            const dot = w.scheduled ? (w.today ? tk.onAccent : tk.go) : 'transparent';
+            return (
+              <View key={i} style={[styles.weekChip, { backgroundColor: bg }]}>
+                <Text style={[styles.weekDay, { color: fg, opacity: w.today ? 0.85 : 0.6 }]}>{w.day.toUpperCase()}</Text>
+                <Text style={[styles.weekDate, { color: fg }]}>{w.date}</Text>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dot }}/>
+              </View>
+            );
+          })}
         </View>
-      ) : (
-        <FlatList
-          data={schedules}
-          keyExtractor={s => String(s.id)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-          ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
-        />
-      )}
 
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: accent }]}
-        onPress={() => navigation.navigate('AddEditSchedule', {})}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.fabText}>+ Schedule</Text>
-      </TouchableOpacity>
+        {/* Next run hero */}
+        {next ? (
+          <Card tone="accent" padded={false} style={{ overflow: 'hidden' }}>
+            <View style={{ padding: 18 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[styles.heroLabel, { color: tk.onAccentSoft }]}>
+                  {labelForDate(next.time, now).toUpperCase()}
+                </Text>
+                <VerdictChip verdict="GOOD" size="sm"/>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginTop: 10 }}>
+                <Text style={[styles.heroTime, { color: tk.onSurface }]}>
+                  {formatTime(next.schedule.hour, next.schedule.minute)}
+                </Text>
+                <Text style={[styles.heroDist, { color: tk.onAccentSoft }]}>
+                  · {next.schedule.distanceKm}K {next.schedule.runType.toLowerCase()}
+                </Text>
+              </View>
+              <Text style={[styles.heroFoot, { color: tk.onAccentSoft }]}>
+                Tap to edit · long-press to delete
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('AddEditSchedule', { scheduleId: next.schedule.id })}
+              onLongPress={() => handleDelete(next.schedule.id)}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            />
+          </Card>
+        ) : (
+          <Card tone="surface2">
+            <Text style={[styles.empty, { color: tk.onSurface }]}>No upcoming runs</Text>
+            <Text style={[styles.emptySub, { color: tk.onSurfaceVar }]}>
+              Tap + to schedule your first run
+            </Text>
+          </Card>
+        )}
+
+        {/* Upcoming list */}
+        {upcoming.length > 0 && (
+          <>
+            <SectionTitle title="Upcoming"/>
+            <View style={{ gap: 8 }}>
+              {upcoming.map(({ schedule: s, when }) => (
+                <TouchableOpacity
+                  key={s.id}
+                  activeOpacity={0.85}
+                  onPress={() => navigation.navigate('AddEditSchedule', { scheduleId: s.id })}
+                  onLongPress={() => handleDelete(s.id)}
+                >
+                  <Card tone="surface1" style={styles.runCard}>
+                    <View style={[styles.dateBadge, { backgroundColor: tk.goSoft }]}>
+                      <Text style={[styles.dateBadgeDay, { color: tk.onGoSoft }]}>
+                        {DAY_LABELS[when.getDay()].toUpperCase()}
+                      </Text>
+                      <Text style={[styles.dateBadgeNum, { color: tk.onGoSoft }]}>
+                        {when.getDate()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.runTitle, { color: tk.onSurface }]} numberOfLines={1}>
+                        {formatTime(s.hour, s.minute)} · {s.distanceKm}K {s.runType.toLowerCase()}
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        <Icon name="bell" size={12} color={tk.onSurfaceVar}/>
+                        <Text style={{ color: tk.onSurfaceVar, fontSize: 12 }}>
+                          {s.isEnabled ? `Notify ${prefs.notifyLeadMinutes ?? 30} min ahead` : 'Notifications off'}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleToggle(s.id, !s.isEnabled)}
+                      style={[styles.toggle, {
+                        backgroundColor: s.isEnabled ? tk.accent : tk.surface3,
+                        justifyContent: s.isEnabled ? 'flex-end' : 'flex-start',
+                      }]}
+                    >
+                      <View style={[styles.toggleDot, { backgroundColor: '#fff' }]}/>
+                    </TouchableOpacity>
+                  </Card>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* Disabled schedules */}
+        {schedules.some(s => !s.isEnabled) && (
+          <>
+            <SectionTitle title="Paused"/>
+            <View style={{ gap: 8 }}>
+              {schedules.filter(s => !s.isEnabled).map(s => (
+                <TouchableOpacity
+                  key={s.id}
+                  activeOpacity={0.85}
+                  onPress={() => navigation.navigate('AddEditSchedule', { scheduleId: s.id })}
+                  onLongPress={() => handleDelete(s.id)}
+                >
+                  <Card tone="surface2" style={styles.runCard}>
+                    <View style={[styles.dateBadge, { backgroundColor: tk.surface3 }]}>
+                      <Text style={[styles.dateBadgeDay, { color: tk.onSurfaceVar }]}>
+                        {DAY_LABELS[s.dayOfWeek].toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.runTitle, { color: tk.onSurfaceVar }]}>
+                        {formatTime(s.hour, s.minute)} · {s.distanceKm}K {s.runType.toLowerCase()}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleToggle(s.id, !s.isEnabled)}
+                      style={[styles.toggle, {
+                        backgroundColor: tk.surface3, justifyContent: 'flex-start',
+                      }]}
+                    >
+                      <View style={[styles.toggleDot, { backgroundColor: '#fff' }]}/>
+                    </TouchableOpacity>
+                  </Card>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+      </ScrollView>
+
+      <FAB label="Schedule" onPress={() => navigation.navigate('AddEditSchedule', {})}/>
     </SafeAreaView>
   );
 }
 
+function labelForDate(timeMs: number, now: Date): string {
+  const t = new Date(timeMs);
+  if (t.toDateString() === now.toDateString()) return `Today, ${DAY_LABELS[t.getDay()]} ${monthName(t.getMonth()).slice(0, 3)} ${t.getDate()}`;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (t.toDateString() === tomorrow.toDateString()) return `Tomorrow, ${DAY_LABELS[t.getDay()]}`;
+  return `${DAY_LABELS[t.getDay()]} ${t.getDate()}`;
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.surface },
-  topBar: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, paddingBottom: Spacing.sm },
-  title: { ...Typography.h1, color: Colors.onSurface },
-  list: { padding: Spacing.lg, paddingBottom: 100 },
-  card: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-    backgroundColor: Colors.surface1, borderRadius: Radius.lg, padding: Spacing.lg,
-    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 }, android: { elevation: 1 } }),
+  safe: { flex: 1 },
+  topBar: {
+    paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  month: { fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  title: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5 },
+  iconBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  scroll: { paddingHorizontal: 16, paddingBottom: 120, gap: 8 },
+  weekRow: { flexDirection: 'row', gap: 6, marginBottom: 14, marginTop: 8 },
+  weekChip: {
+    flex: 1, paddingVertical: 10, borderRadius: 18,
+    alignItems: 'center', gap: 4,
+  },
+  weekDay: { fontSize: 10, fontWeight: '600', letterSpacing: 0.4 },
+  weekDate: { fontSize: 18, fontWeight: '700' },
+  heroLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  heroTime: { fontSize: 36, fontWeight: '700', letterSpacing: -1, lineHeight: 38 },
+  heroDist: { fontSize: 14, paddingBottom: 4 },
+  heroFoot: { fontSize: 12, marginTop: 6, opacity: 0.8 },
+  empty: { fontSize: 18, fontWeight: '600' },
+  emptySub: { fontSize: 13, marginTop: 4 },
+  runCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14,
   },
   dateBadge: {
-    width: 48, height: 48, borderRadius: Radius.sm,
+    width: 48, height: 48, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
   },
-  dayText: { ...Typography.bodyBold },
-  cardBody: { flex: 1 },
-  timeText: { ...Typography.h3, color: Colors.onSurface },
-  detailText: { ...Typography.small, color: Colors.onSurfaceVar, marginTop: 2 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
-  emptyIcon: { fontSize: 48 },
-  emptyText: { ...Typography.h2, color: Colors.onSurface },
-  emptyHint: { ...Typography.body, color: Colors.onSurfaceVar },
-  fab: {
-    position: 'absolute', right: Spacing.lg, bottom: Spacing.xl,
-    height: 56, borderRadius: Radius.md, paddingHorizontal: Spacing.xl,
-    alignItems: 'center', justifyContent: 'center',
-    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 }, android: { elevation: 6 } }),
+  dateBadgeDay: { fontSize: 9, fontWeight: '700', letterSpacing: 0.4 },
+  dateBadgeNum: { fontSize: 18, fontWeight: '700', lineHeight: 20 },
+  runTitle: { fontSize: 15, fontWeight: '600' },
+  toggle: {
+    width: 48, height: 28, borderRadius: 14, padding: 2,
+    flexDirection: 'row', alignItems: 'center',
   },
-  fabText: { ...Typography.bodyBold, color: Colors.onAccent },
+  toggleDot: { width: 24, height: 24, borderRadius: 12 },
 });

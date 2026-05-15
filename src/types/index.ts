@@ -28,6 +28,10 @@ export interface HourlyWeather {
   condition: { code: number; text: string; icon: string };
 }
 
+export type UnitDistance = 'km' | 'mi';
+export type UnitTemp = 'C' | 'F';
+export type UnitWind = 'km/h' | 'mph' | 'm/s';
+
 export interface UserPreferences {
   homeCity: string;
   homeLat: number | null;
@@ -35,6 +39,18 @@ export interface UserPreferences {
   accentColor: string;
   windThresholdKmh: number;
   notifyLeadMinutes: number;
+  darkMode: boolean;
+  rainChanceThreshold: number; // 0-100
+  unitDistance: UnitDistance;
+  unitTemp: UnitTemp;
+  unitWind: UnitWind;
+  notifyOnChange: boolean;
+  quietHoursEnabled: boolean;
+  stravaConnected: boolean;
+  spotifyConnected: boolean;
+  garminConnected: boolean;
+  healthConnectConnected: boolean;
+  stravaAutoImport: boolean;
 }
 
 export interface RunHistoryEntry {

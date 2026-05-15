@@ -50,3 +50,8 @@ The wind threshold comes from `prefs.windThresholdKmh` (default 15 km/h), passed
 - Android fires every ~15 min as configured.
 - iOS manages frequency itself and may deliver far less often; the app must have been used recently for iOS to grant background time.
 - The task is defined at module load time via `TaskManager.defineTask` in `backgroundTask.ts` — this file must be imported before `registerBackgroundTask()` is called (done in `App.tsx`).
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->

@@ -51,7 +51,9 @@ export async function getAllSchedules(): Promise<RunSchedule[]> {
 
 export async function getEnabledSchedules(): Promise<RunSchedule[]> {
   const database = await getDb();
-  const rows = await database.getAllAsync<any>('SELECT * FROM run_schedules WHERE isEnabled = 1');
+  const rows = await database.getAllAsync<any>(
+    'SELECT * FROM run_schedules WHERE isEnabled = 1 ORDER BY dayOfWeek, hour, minute'
+  );
   return rows.map(rowToSchedule);
 }
 
@@ -136,7 +138,9 @@ export async function getMonthlyStats(): Promise<{ totalKm: number; totalRuns: n
   const now = new Date();
   const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   const row = await database.getFirstAsync<any>(
-    `SELECT COALESCE(SUM(distanceKm), 0) as totalKm, COUNT(*) as totalRuns, SUM(completed) as completedRuns
+    `SELECT COALESCE(SUM(CASE WHEN completed = 1 THEN distanceKm ELSE 0 END), 0) as totalKm,
+            COUNT(*) as totalRuns,
+            COALESCE(SUM(completed), 0) as completedRuns
      FROM run_history WHERE date >= ?`,
     [monthStart]
   );
@@ -145,6 +149,26 @@ export async function getMonthlyStats(): Promise<{ totalKm: number; totalRuns: n
     totalRuns: row?.totalRuns ?? 0,
     completedRuns: row?.completedRuns ?? 0,
   };
+}
+
+export async function setHistoryCompleted(id: number, completed: boolean): Promise<void> {
+  const database = await getDb();
+  await database.runAsync('UPDATE run_history SET completed = ? WHERE id = ?', [completed ? 1 : 0, id]);
+}
+
+export async function deleteHistoryEntry(id: number): Promise<void> {
+  const database = await getDb();
+  await database.runAsync('DELETE FROM run_history WHERE id = ?', [id]);
+}
+
+// Returns ISO timestamps for the most recent N completed runs, newest first.
+export async function getCompletedDates(limit = 60): Promise<string[]> {
+  const database = await getDb();
+  const rows = await database.getAllAsync<any>(
+    'SELECT date FROM run_history WHERE completed = 1 ORDER BY date DESC LIMIT ?',
+    [limit]
+  );
+  return rows.map(r => r.date as string);
 }
 
 // --- Helpers ---

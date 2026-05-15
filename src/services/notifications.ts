@@ -83,9 +83,14 @@ export async function sendRunNotification(
     contentObj.channelId = CHANNEL_ID;
   }
 
+  const trigger: any =
+    Platform.OS === 'android'
+      ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, channelId: CHANNEL_ID }
+      : null;
+
   await Notifications.scheduleNotificationAsync({
     content: contentObj,
-    trigger: null,
+    trigger,
   });
 }
 
