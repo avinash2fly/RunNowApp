@@ -1,50 +1,138 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report
+==================
+Version change: N/A → 1.0.0 (initial ratification)
+Modified principles: N/A (initial)
+Added sections:
+  - Core Principles (5): Offline-First, UX Clarity, Battery Efficiency,
+    Data Integrity, Simplicity
+  - Technical Constraints
+  - Development Workflow
+  - Governance
+Removed sections: None
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ compatible (Constitution Check
+    section references constitution generically)
+  - .specify/templates/spec-template.md ✅ compatible (no constitution-
+    specific references)
+  - .specify/templates/tasks-template.md ✅ compatible (no constitution-
+    specific references)
+Follow-up TODOs: None
+-->
+
+# RunNow Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Offline-First
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All user data MUST reside on-device. The app MUST NOT require a
+backend service for core functionality (schedules, history,
+preferences). The only external dependency permitted is the weather
+API, and the app MUST degrade gracefully when the network is
+unavailable — displaying the last known verdict or an UNKNOWN status
+rather than crashing or blocking the user.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+- Schedules and history persist in SQLite via `expo-sqlite`.
+- Preferences persist in AsyncStorage.
+- No server-side accounts, analytics, or telemetry.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### II. UX Clarity
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+Every weather verdict (GOOD, MARGINAL, BAD, UNKNOWN) MUST be
+immediately understandable without explanation. Notifications MUST
+convey the verdict and relevant conditions in a single glance.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+- Verdict logic MUST be deterministic: identical inputs produce
+  identical outputs.
+- UI components MUST distinguish verdict states with color, icon, and
+  label — never color alone.
+- Notification copy MUST include the verdict, temperature, and the
+  triggering condition (rain, wind, snow) when applicable.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### III. Battery Efficiency
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Background tasks MUST minimize battery and resource consumption. The
+app MUST NOT schedule unnecessary network requests or wake-ups.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- Background fetch MUST only fire weather requests for schedules that
+  are due within the configured notification lead time.
+- The background task MUST complete as quickly as possible to avoid
+  iOS termination and Android battery penalties.
+- No polling loops, persistent connections, or location tracking.
+
+### IV. Data Integrity
+
+All persistent state changes MUST be atomic and safe against
+interruption (app kill, OS reclaim, crash during background task).
+
+- SQLite writes MUST use transactions where multiple rows are
+  affected.
+- Schema migrations MUST be forward-only and applied lazily on
+  database open.
+- History entries MUST NOT be created without a corresponding
+  schedule lookup to prevent orphaned records.
+
+### V. Simplicity
+
+Features MUST solve a real user need before being added. Prefer fewer
+well-built features over many half-finished ones.
+
+- No abstractions without at least two concrete consumers.
+- No configuration options unless users have explicitly requested
+  control over the behavior.
+- New dependencies MUST be justified — prefer Expo SDK modules over
+  third-party packages when equivalent functionality exists.
+
+## Technical Constraints
+
+- **Runtime**: Expo (React Native) with managed workflow preferred.
+  Ejecting to bare workflow requires justification.
+- **Language**: TypeScript strictly — no `any` types except at
+  external API boundaries where the response shape is validated at
+  runtime.
+- **Navigation**: React Navigation with a stack + tab structure. New
+  screens MUST fit within the existing navigator hierarchy unless a
+  new flow is architecturally justified.
+- **State**: `PreferencesContext` is the single global state provider.
+  New global state MUST NOT introduce additional context providers
+  without demonstrating that preferences context is insufficient.
+- **Weather provider**: WeatherAPI.com. Switching providers requires
+  updating the verdict evaluation logic and is treated as a breaking
+  change.
+
+## Development Workflow
+
+- **Branching**: Feature branches off `main`. One feature per branch.
+- **Commits**: Small, atomic commits. Each commit MUST leave the app
+  in a buildable state.
+- **Testing**: Manual testing via Expo Go is the primary verification
+  method. When automated tests are added, they MUST test behavior
+  (verdict logic, database operations) rather than implementation
+  details.
+- **Code review**: All changes SHOULD be reviewed before merging to
+  `main`. Self-review is acceptable for solo development but MUST
+  include running the app on at least one platform.
+- **Releases**: Production builds via `expo run:ios` / `expo
+  run:android`. No OTA updates without explicit version bumping.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution is the authoritative source of project principles.
+All feature specifications, implementation plans, and code reviews
+MUST verify compliance with these principles.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+- **Amendments**: Any principle change MUST be documented with a
+  rationale, updated in this file, and propagated to dependent
+  templates.
+- **Versioning**: Constitution versions follow semantic versioning
+  (MAJOR.MINOR.PATCH). Adding or removing a principle is MINOR.
+  Redefining a principle's meaning is MAJOR. Wording clarifications
+  are PATCH.
+- **Compliance**: Feature specs MUST reference which principles apply.
+  Plan documents MUST include a Constitution Check gate.
+- **Conflicts**: When a principle conflicts with a practical
+  constraint, document the exception in the relevant spec or plan
+  with a clear justification.
+
+**Version**: 1.0.0 | **Ratified**: 2026-05-16 | **Last Amended**: 2026-05-16
