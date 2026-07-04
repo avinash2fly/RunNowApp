@@ -44,6 +44,11 @@ describe('evaluateVerdict', () => {
     expect(evaluateVerdict([hour({ chance_of_rain: 40 })])).toBe('MARGINAL');
   });
 
+  it('respects a custom rain-chance threshold', () => {
+    expect(evaluateVerdict([hour({ chance_of_rain: 40 })], 15, 50)).toBe('GOOD');
+    expect(evaluateVerdict([hour({ chance_of_rain: 40 })], 15, 20)).toBe('MARGINAL');
+  });
+
   it('prioritises BAD over MARGINAL', () => {
     const slots = [hour({ chance_of_rain: 60 }), hour({ will_it_rain: 1 })];
     expect(evaluateVerdict(slots)).toBe('BAD');

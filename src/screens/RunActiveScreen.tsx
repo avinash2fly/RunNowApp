@@ -9,6 +9,7 @@ import { getScheduleById, insertHistoryEntry } from '../services/database';
 import { hexMix } from '../theme';
 import { Icon } from '../components/Icon';
 import { startTracking, TrackPoint, haversineMeters } from '../utils/location';
+import { distanceFromKm, formatRunDistance } from '../utils/units';
 import { RunSchedule } from '../types';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -120,7 +121,7 @@ export default function RunActiveScreen() {
               date: new Date().toISOString(),
               distanceKm: distanceKm > 0.01 ? Math.round(distanceKm * 100) / 100 : schedule?.distanceKm ?? 0,
               durationSec: elapsedSec,
-              verdict: 'GOOD',
+              verdict: route.params?.verdict ?? 'UNKNOWN',
               completed: true,
             });
           } catch {}
@@ -131,7 +132,9 @@ export default function RunActiveScreen() {
   };
 
   const distanceKm = distanceM / 1000;
-  const avgPaceMin = elapsedSec > 0 && distanceKm > 0.01 ? elapsedSec / 60 / distanceKm : 0;
+  const unitDist = prefs.unitDistance;
+  const distanceDisplay = distanceFromKm(distanceKm, unitDist);
+  const avgPaceMin = elapsedSec > 0 && distanceKm > 0.01 ? elapsedSec / 60 / distanceDisplay : 0;
   const paceStr = avgPaceMin > 0 ? formatPace(avgPaceMin) : '—';
   const timer = formatTime(elapsedSec);
 
@@ -173,7 +176,7 @@ export default function RunActiveScreen() {
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={styles.eyebrow}>
               {schedule
-                ? `${runLabel(schedule.hour).toUpperCase()} · ${schedule.distanceKm}K ${schedule.runType.toUpperCase()}`
+                ? `${runLabel(schedule.hour).toUpperCase()} · ${formatRunDistance(schedule.distanceKm, prefs.unitDistance)} ${schedule.runType.toUpperCase()}`
                 : 'FREESTYLE RUN'}
             </Text>
             <Text style={styles.subEyebrow}>
@@ -199,15 +202,15 @@ export default function RunActiveScreen() {
 
         {/* Stats grid */}
         <View style={styles.statsGrid}>
-          <StatTile label="DISTANCE" value={distanceKm.toFixed(2)} unit="km"/>
-          <StatTile label="PACE" value={paceStr} unit="/km"/>
+          <StatTile label="DISTANCE" value={distanceDisplay.toFixed(2)} unit={unitDist}/>
+          <StatTile label="PACE" value={paceStr} unit={`/${unitDist}`}/>
           <StatTile label="ELAPSED" value={timer} unit=""/>
         </View>
 
         {/* Pace chart */}
         <View style={styles.paceCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <Text style={styles.paceLabel}>PACE · LAST {Math.min(12, paceHistory.length)} MIN</Text>
+            <Text style={styles.paceLabel}>PACE TREND</Text>
             <Text style={styles.paceAvg}>AVG {paceStr}</Text>
           </View>
           <Svg width="100%" height={90} viewBox="0 0 100 100" preserveAspectRatio="none" style={{ marginTop: 8 }}>
@@ -226,10 +229,10 @@ export default function RunActiveScreen() {
             <Line x1="0" y1="50" x2="100" y2="50" stroke="#fff" strokeWidth={0.6} strokeDasharray="2 2" opacity={0.35} vectorEffect="non-scaling-stroke"/>
           </Svg>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-            <Text style={styles.paceX}>0 km</Text>
-            <Text style={styles.paceX}>{(distanceKm / 3).toFixed(1)}</Text>
-            <Text style={styles.paceX}>{((distanceKm * 2) / 3).toFixed(1)}</Text>
-            <Text style={styles.paceX}>{distanceKm.toFixed(1)} km</Text>
+            <Text style={styles.paceX}>0 {unitDist}</Text>
+            <Text style={styles.paceX}>{(distanceDisplay / 3).toFixed(1)}</Text>
+            <Text style={styles.paceX}>{((distanceDisplay * 2) / 3).toFixed(1)}</Text>
+            <Text style={styles.paceX}>{distanceDisplay.toFixed(1)} {unitDist}</Text>
           </View>
         </View>
 

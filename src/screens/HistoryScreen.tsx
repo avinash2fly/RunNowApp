@@ -2,10 +2,11 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTokens } from '../store/PreferencesContext';
+import { usePreferences, useTokens } from '../store/PreferencesContext';
 import {
   getHistory, getMonthlyStats, setHistoryCompleted, deleteHistoryEntry, getCompletedDates,
 } from '../services/database';
+import { distanceFromKm, formatDistance } from '../utils/units';
 import { VerdictChip } from '../components/VerdictChip';
 import { Card } from '../components/Card';
 import { Icon, IconName } from '../components/Icon';
@@ -24,17 +25,19 @@ type Period = typeof PERIODS[number];
 
 export default function HistoryScreen() {
   const tk = useTokens();
+  const { prefs } = usePreferences();
+  const unitDist = prefs.unitDistance;
   const [history, setHistory] = useState<RunHistoryEntry[]>([]);
-  const [stats, setStats] = useState({ totalKm: 0, totalRuns: 0, completedRuns: 0 });
+  const [monthStats, setMonthStats] = useState({ totalKm: 0, totalRuns: 0, completedRuns: 0 });
   const [streak, setStreak] = useState(0);
   const [period, setPeriod] = useState<Period>('Month');
 
   const reload = useCallback(async () => {
     const [h, s, completed] = await Promise.all([
-      getHistory(100), getMonthlyStats(), getCompletedDates(120),
+      getHistory(500), getMonthlyStats(), getCompletedDates(120),
     ]);
     setHistory(h);
-    setStats(s);
+    setMonthStats(s);
     setStreak(calculateStreak(completed));
   }, []);
 
@@ -64,6 +67,38 @@ export default function HistoryScreen() {
     ]);
   };
 
+  // Period filtering — drives the stats hero, breakdown, and recent list.
+  const periodStart = useMemo(() => {
+    const now = new Date();
+    if (period === 'Week') {
+      const d = new Date(now);
+      d.setDate(now.getDate() - 6);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    if (period === 'Month') return new Date(now.getFullYear(), now.getMonth(), 1);
+    if (period === 'Year') return new Date(now.getFullYear(), 0, 1);
+    return null; // All
+  }, [period]);
+
+  const filtered = useMemo(
+    () => (periodStart ? history.filter(h => new Date(h.date) >= periodStart) : history),
+    [history, periodStart]
+  );
+
+  const stats = useMemo(() => {
+    const completed = filtered.filter(h => h.completed);
+    return {
+      totalKm: completed.reduce((a, h) => a + h.distanceKm, 0),
+      totalRuns: filtered.length,
+      completedRuns: completed.length,
+    };
+  }, [filtered]);
+
+  const periodLabel = {
+    Week: 'THIS WEEK', Month: 'THIS MONTH', Year: 'THIS YEAR', All: 'ALL TIME',
+  }[period];
+
   const hitRate = stats.totalRuns > 0
     ? Math.round((stats.completedRuns / stats.totalRuns) * 100)
     : 0;
@@ -87,7 +122,7 @@ export default function HistoryScreen() {
   // Conditions breakdown (GO/WAIT/SKIP counts)
   const breakdown = useMemo(() => {
     const counts = { GOOD: 0, MARGINAL: 0, BAD: 0 };
-    for (const h of history) {
+    for (const h of filtered) {
       if (h.verdict in counts) (counts as any)[h.verdict] += 1;
     }
     const total = counts.GOOD + counts.MARGINAL + counts.BAD || 1;
@@ -96,7 +131,7 @@ export default function HistoryScreen() {
       wait: Math.round((counts.MARGINAL / total) * 100),
       skip: Math.round((counts.BAD / total) * 100),
     };
-  }, [history]);
+  }, [filtered]);
 
   // 16-week × 7-day heatmap
   const heatmap = useMemo(() => {
@@ -158,7 +193,7 @@ export default function HistoryScreen() {
   };
 
   const monthlyGoalKm = 60;
-  const goalPct = Math.min(100, Math.round((stats.totalKm / monthlyGoalKm) * 100));
+  const goalPct = Math.min(100, Math.round((monthStats.totalKm / monthlyGoalKm) * 100));
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: tk.surface }]} edges={['top', 'left', 'right']}>
@@ -186,7 +221,7 @@ export default function HistoryScreen() {
         {/* Stats hero */}
         <Card tone="surface1" style={{ padding: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={[styles.statsHeader, { color: tk.onSurfaceVar }]}>THIS MONTH</Text>
+            <Text style={[styles.statsHeader, { color: tk.onSurfaceVar }]}>{periodLabel}</Text>
             {stats.completedRuns > 0 && (
               <View style={[styles.trendChip, { backgroundColor: tk.goSoft }]}>
                 <Text style={{ color: tk.go, fontSize: 11, fontWeight: '700' }}>↑ ON TRACK</Text>
@@ -194,7 +229,7 @@ export default function HistoryScreen() {
             )}
           </View>
           <View style={{ flexDirection: 'row', gap: 20, marginTop: 12, alignItems: 'baseline' }}>
-            <Metric value={String(Math.round(stats.totalKm))} unit="km" label="Distance" color={tk.onSurface}/>
+            <Metric value={String(Math.round(distanceFromKm(stats.totalKm, unitDist)))} unit={unitDist} label="Distance" color={tk.onSurface}/>
             <Metric value={String(stats.totalRuns)} label="Runs" color={tk.onSurface}/>
             <Metric value={`${hitRate}`} unit="%" label="Hit rate" color={tk.accent}/>
           </View>
@@ -204,7 +239,7 @@ export default function HistoryScreen() {
             <View style={{ position: 'absolute', left: 0, right: 0, top: '40%', borderTopWidth: 1.5, borderColor: tk.outlineStrong, borderStyle: 'dashed' }}/>
             <View style={{ position: 'absolute', right: 0, top: '32%' }}>
               <Text style={[styles.avgLabel, { color: tk.onSurfaceVar, backgroundColor: tk.surface1 }]}>
-                AVG {Math.round(avgKm)}km
+                AVG {Math.round(distanceFromKm(avgKm, unitDist))}{unitDist}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: '100%' }}>
@@ -214,7 +249,9 @@ export default function HistoryScreen() {
                 return (
                   <View key={i} style={{ flex: 1, alignItems: 'center', gap: 4 }}>
                     {isLast && w > 0 && (
-                      <Text style={{ color: tk.accent, fontSize: 10, fontWeight: '700' }}>{Math.round(w)}km</Text>
+                      <Text style={{ color: tk.accent, fontSize: 10, fontWeight: '700' }}>
+                        {Math.round(distanceFromKm(w, unitDist))}{unitDist}
+                      </Text>
                     )}
                     <View style={{
                       width: '100%', height: `${h}%`, minHeight: 4,
@@ -322,9 +359,9 @@ export default function HistoryScreen() {
                 )}
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
-                <LegendDot color={tk.go} label="Clear"/>
-                <LegendDot color={tk.wait} label="Cloudy"/>
-                <LegendDot color={tk.skip} label="Drizzle"/>
+                <LegendDot color={tk.go} label="Good"/>
+                <LegendDot color={tk.wait} label="Marginal"/>
+                <LegendDot color={tk.skip} label="Bad"/>
               </View>
             </Card>
           </>
@@ -336,7 +373,7 @@ export default function HistoryScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
             <Text style={{ color: tk.onSurface, fontSize: 15, fontWeight: '600' }}>Distance</Text>
             <Text style={{ color: tk.onSurface, fontSize: 13, fontWeight: '700' }}>
-              <Text style={{ color: tk.accent }}>{Math.round(stats.totalKm)}</Text> / {monthlyGoalKm} km
+              <Text style={{ color: tk.accent }}>{Math.round(distanceFromKm(monthStats.totalKm, unitDist))}</Text> / {Math.round(distanceFromKm(monthlyGoalKm, unitDist))} {unitDist}
             </Text>
           </View>
           <View style={{ height: 10, borderRadius: 5, backgroundColor: tk.surface3, marginTop: 10, overflow: 'hidden' }}>
@@ -345,20 +382,20 @@ export default function HistoryScreen() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
             <Text style={{ color: tk.onSurfaceVar, fontSize: 11 }}>{goalPct}% complete</Text>
             <Text style={{ color: tk.onSurfaceVar, fontSize: 11 }}>
-              {Math.max(0, monthlyGoalKm - Math.round(stats.totalKm))} km to go
+              {Math.max(0, Math.round(distanceFromKm(monthlyGoalKm - monthStats.totalKm, unitDist)))} {unitDist} to go
             </Text>
           </View>
         </Card>
 
         {/* Recent runs */}
-        {history.length > 0 && (
+        {filtered.length > 0 && (
           <>
             <SectionTitle title="Recent runs"/>
             <Text style={{ color: tk.onSurfaceVar, fontSize: 11, marginTop: -8, marginLeft: 4 }}>
               Tap to mark done · long-press to delete
             </Text>
             <View>
-              {history.slice(0, 8).map((h, i) => (
+              {filtered.slice(0, 8).map((h, i, arr) => (
                 <TouchableOpacity
                   key={h.id}
                   activeOpacity={0.8}
@@ -366,7 +403,7 @@ export default function HistoryScreen() {
                   onLongPress={() => handleDelete(h)}
                   style={[styles.runRow, {
                     borderBottomColor: tk.outline,
-                    borderBottomWidth: i === history.length - 1 ? 0 : 1,
+                    borderBottomWidth: i === arr.length - 1 ? 0 : 1,
                   }]}
                 >
                   <View style={[styles.runCondIcon, { backgroundColor: tk.surface2 }]}>
@@ -378,7 +415,7 @@ export default function HistoryScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: tk.onSurface, fontSize: 14, fontWeight: '600' }}>
-                      {h.distanceKm} km {h.durationSec > 0 ? `· ${formatTime(h.durationSec)}` : ''}
+                      {formatDistance(h.distanceKm, unitDist)} {h.durationSec > 0 ? `· ${formatTime(h.durationSec)}` : ''}
                     </Text>
                     <Text style={{ color: tk.onSurfaceVar, fontSize: 12, marginTop: 1 }}>
                       {longDate(h.date)}
@@ -400,7 +437,7 @@ export default function HistoryScreen() {
           </>
         )}
 
-        {history.length === 0 && (
+        {filtered.length === 0 && (
           <View style={{ alignItems: 'center', paddingTop: 60, gap: 8 }}>
             <Icon name="chart" size={48} color={tk.onSurfaceVar}/>
             <Text style={{ color: tk.onSurface, fontSize: 18, fontWeight: '700' }}>No runs logged yet</Text>

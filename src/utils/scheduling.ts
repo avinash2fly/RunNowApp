@@ -40,15 +40,16 @@ export function nextRunCountdown(schedules: RunSchedule[], now: Date = new Date(
   return `Your run starts in ${m} min`;
 }
 
-// Returns true if the schedule's next occurrence falls within [now, now + leadMinutes].
-// Handles wrap-around near midnight by checking the schedule's next firing across days.
-export function isWithinWindow(
+// Returns the Date of the schedule's next occurrence if it falls within
+// [now, now + leadMinutes], else null. Handles wrap-around near midnight by
+// checking the schedule's next firing across days.
+export function occurrenceWithinWindow(
   dayOfWeek: number,
   hour: number,
   minute: number,
   leadMinutes: number,
   now: Date = new Date()
-): boolean {
+): Date | null {
   const windowMs = leadMinutes * 60 * 1000;
 
   // Build the next 8 candidate firings (covers any wrap-around case)
@@ -58,10 +59,21 @@ export function isWithinWindow(
     candidate.setHours(hour, minute, 0, 0);
     if (candidate.getDay() !== dayOfWeek) continue;
     const diff = candidate.getTime() - now.getTime();
-    if (diff >= 0 && diff <= windowMs) return true;
-    if (diff > windowMs) return false; // future occurrences will only be further away
+    if (diff >= 0 && diff <= windowMs) return candidate;
+    if (diff > windowMs) return null; // future occurrences will only be further away
   }
-  return false;
+  return null;
+}
+
+// Returns true if the schedule's next occurrence falls within [now, now + leadMinutes].
+export function isWithinWindow(
+  dayOfWeek: number,
+  hour: number,
+  minute: number,
+  leadMinutes: number,
+  now: Date = new Date()
+): boolean {
+  return occurrenceWithinWindow(dayOfWeek, hour, minute, leadMinutes, now) != null;
 }
 
 export function formatTime(hour: number, minute: number): string {

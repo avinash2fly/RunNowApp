@@ -16,6 +16,7 @@ import { FAB } from '../components/FAB';
 import { SectionTitle } from '../components/SectionTitle';
 import { RunSchedule } from '../types';
 import { nextRun as computeNextRun } from '../utils/scheduling';
+import { formatRunDistance } from '../utils/units';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 type Nav = StackNavigationProp<RootStackParamList>;
@@ -87,7 +88,7 @@ export default function ScheduleScreen() {
     await setScheduleEnabled(id, value);
     const schedule = schedules.find(s => s.id === id);
     if (schedule) {
-      if (value) {
+      if (value && schedule.notifyAhead) {
         const leadMinutes = prefs.notifyLeadMinutes ?? 30;
         await scheduleWeeklyRunNotification(id, schedule.dayOfWeek, schedule.hour, schedule.minute, leadMinutes);
       } else {
@@ -158,7 +159,7 @@ export default function ScheduleScreen() {
                   {formatTime(next.schedule.hour, next.schedule.minute)}
                 </Text>
                 <Text style={[styles.heroDist, { color: tk.onAccentSoft }]}>
-                  · {next.schedule.distanceKm}K {next.schedule.runType.toLowerCase()}
+                  · {formatRunDistance(next.schedule.distanceKm, prefs.unitDistance)} {next.schedule.runType.toLowerCase()}
                 </Text>
               </View>
               <Text style={[styles.heroFoot, { color: tk.onAccentSoft }]}>
@@ -204,12 +205,12 @@ export default function ScheduleScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.runTitle, { color: tk.onSurface }]} numberOfLines={1}>
-                        {formatTime(s.hour, s.minute)} · {s.distanceKm}K {s.runType.toLowerCase()}
+                        {formatTime(s.hour, s.minute)} · {formatRunDistance(s.distanceKm, prefs.unitDistance)} {s.runType.toLowerCase()}
                       </Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
                         <Icon name="bell" size={12} color={tk.onSurfaceVar}/>
                         <Text style={{ color: tk.onSurfaceVar, fontSize: 12 }}>
-                          {s.isEnabled ? `Notify ${prefs.notifyLeadMinutes ?? 30} min ahead` : 'Notifications off'}
+                          {s.notifyAhead ? `Notify ${prefs.notifyLeadMinutes ?? 30} min ahead` : 'Reminder off'}
                         </Text>
                       </View>
                     </View>
@@ -249,7 +250,7 @@ export default function ScheduleScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.runTitle, { color: tk.onSurfaceVar }]}>
-                        {formatTime(s.hour, s.minute)} · {s.distanceKm}K {s.runType.toLowerCase()}
+                        {formatTime(s.hour, s.minute)} · {formatRunDistance(s.distanceKm, prefs.unitDistance)} {s.runType.toLowerCase()}
                       </Text>
                     </View>
                     <TouchableOpacity

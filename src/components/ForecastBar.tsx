@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { HourlyWeather } from '../types';
 import { usePreferences, useTokens } from '../store/PreferencesContext';
 import { evaluateVerdict, weatherConditionToIcon } from '../services/weather';
+import { formatTemp, windFromKph } from '../utils/units';
 import { Icon } from './Icon';
 
 interface Props {
@@ -26,7 +27,7 @@ export function ForecastBar({ hourly, activeIndex = 0, compact = false }: Props)
         const date = new Date(h.time_epoch * 1000);
         const hour = date.getHours();
         const label = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
-        const slotVerdict = evaluateVerdict([h], prefs.windThresholdKmh ?? 15);
+        const slotVerdict = evaluateVerdict([h], prefs.windThresholdKmh ?? 15, prefs.rainChanceThreshold ?? 30);
         const verdictColor = slotVerdict === 'GOOD' ? tk.go : slotVerdict === 'BAD' ? tk.skip : tk.wait;
         const iconName = weatherConditionToIcon(h.condition?.code);
         return (
@@ -37,12 +38,12 @@ export function ForecastBar({ hourly, activeIndex = 0, compact = false }: Props)
             <Text style={[styles.label, { color: isActive ? tk.onAccentSoft : tk.onSurfaceVar }]}>{label}</Text>
             <Icon name={iconName} size={compact ? 22 : 26} color={isActive ? tk.accent : verdictColor}/>
             <Text style={[styles.temp, { color: isActive ? tk.onAccentSoft : tk.onSurface, fontSize: compact ? 14 : 16 }]}>
-              {Math.round(h.temp_c)}°
+              {formatTemp(h.temp_c, prefs.unitTemp)}
             </Text>
             <View style={styles.windRow}>
               <Icon name="wind" size={11} color={isActive ? tk.onAccentSoft : tk.onSurfaceVar}/>
               <Text style={[styles.wind, { color: isActive ? tk.onAccentSoft : tk.onSurfaceVar }]}>
-                {Math.round(h.wind_kph)}
+                {Math.round(windFromKph(h.wind_kph, prefs.unitWind))}
               </Text>
             </View>
           </View>

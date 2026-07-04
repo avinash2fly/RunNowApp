@@ -3,8 +3,9 @@ import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getEnabledSchedules, insertHistoryEntry } from './database';
 import { fetchWeatherForecast } from './weather';
-import { sendRunNotification } from './notifications';
-import { isWithinWindow } from '../utils/scheduling';
+import { sendRunNotification, isInQuietHours } from './notifications';
+import { occurrenceWithinWindow } from '../utils/scheduling';
+import { UnitTemp, UnitWind } from '../types';
 
 export const BACKGROUND_FETCH_TASK = 'RUNNOW_WEATHER_CHECK';
 
@@ -16,7 +17,11 @@ interface StoredPrefs {
   homeLon: number | null;
   weatherApiKey: string;
   windThresholdKmh: number;
+  rainChanceThreshold?: number;
   notifyLeadMinutes: number;
+  quietHoursEnabled?: boolean;
+  unitTemp?: UnitTemp;
+  unitWind?: UnitWind;
 }
 
 async function loadPrefs(): Promise<StoredPrefs | null> {
@@ -45,11 +50,14 @@ async function saveLastFired(map: Record<string, number>): Promise<void> {
   }
 }
 
-// A schedule fires at most once per (scheduleId, target occurrence). We bucket
-// by floor(scheduledAt / day) so the same schedule can fire again the next week.
-function occurrenceKey(scheduleId: number, dayOfWeek: number, hour: number, minute: number, now: Date): string {
-  const week = Math.floor(now.getTime() / (7 * 24 * 60 * 60 * 1000));
-  return `${scheduleId}:${week}:${dayOfWeek}:${hour}:${minute}`;
+// A schedule fires at most once per (scheduleId, target occurrence). Keyed by
+// the occurrence's local calendar date so the same schedule fires again the
+// following week.
+function occurrenceKey(scheduleId: number, occurrence: Date): string {
+  const y = occurrence.getFullYear();
+  const m = String(occurrence.getMonth() + 1).padStart(2, '0');
+  const d = String(occurrence.getDate()).padStart(2, '0');
+  return `${scheduleId}:${y}-${m}-${d}`;
 }
 
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
@@ -65,9 +73,17 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     const leadMinutes = prefs.notifyLeadMinutes ?? 30;
     const now = new Date();
 
-    const due = schedules.filter(s =>
-      isWithinWindow(s.dayOfWeek, s.hour, s.minute, leadMinutes, now)
-    );
+    if (prefs.quietHoursEnabled && isInQuietHours(now)) {
+      console.log('[BackgroundTask] Quiet hours — skipping notifications');
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+
+    const due = schedules
+      .map(s => ({
+        schedule: s,
+        occurrence: occurrenceWithinWindow(s.dayOfWeek, s.hour, s.minute, leadMinutes, now),
+      }))
+      .filter((x): x is { schedule: typeof x.schedule; occurrence: Date } => x.occurrence != null);
 
     if (!due.length) {
       console.log('[BackgroundTask] No due schedules');
@@ -75,10 +91,9 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     }
 
     const lastFired = await loadLastFired();
-    const toNotify = due.filter(s => {
-      const key = occurrenceKey(s.id, s.dayOfWeek, s.hour, s.minute, now);
-      return !lastFired[key];
-    });
+    const toNotify = due.filter(({ schedule, occurrence }) =>
+      !lastFired[occurrenceKey(schedule.id, occurrence)]
+    );
 
     if (!toNotify.length) {
       console.log('[BackgroundTask] All due schedules already fired this window');
@@ -86,10 +101,14 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     }
 
     const windThreshold = prefs.windThresholdKmh ?? 15;
+    const rainThreshold = prefs.rainChanceThreshold ?? 30;
+    const units = { temp: prefs.unitTemp ?? 'C', wind: prefs.unitWind ?? 'km/h' } as const;
 
     let weather;
     try {
-      weather = await fetchWeatherForecast(prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, windThreshold);
+      weather = await fetchWeatherForecast(
+        prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, windThreshold, rainThreshold
+      );
     } catch (fetchErr) {
       console.error('[BackgroundTask] Weather fetch failed, retrying:', fetchErr);
       return BackgroundFetch.BackgroundFetchResult.Failed; // OS will retry
@@ -97,8 +116,8 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
     const windKmh = weather.hourly[0]?.wind_kph;
 
-    for (const schedule of toNotify) {
-      await sendRunNotification(schedule.id, weather.verdict, weather.currentTemp, windKmh);
+    for (const { schedule, occurrence } of toNotify) {
+      await sendRunNotification(schedule.id, weather.verdict, weather.currentTemp, windKmh, units);
 
       await insertHistoryEntry({
         scheduleId: schedule.id,
@@ -109,7 +128,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
         completed: false,
       });
 
-      lastFired[occurrenceKey(schedule.id, schedule.dayOfWeek, schedule.hour, schedule.minute, now)] = now.getTime();
+      lastFired[occurrenceKey(schedule.id, occurrence)] = now.getTime();
     }
 
     // Trim entries older than 14 days to keep the map small

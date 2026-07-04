@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { WeatherVerdict } from '../types';
+import { WeatherVerdict, UnitTemp, UnitWind } from '../types';
+import { formatTempWithUnit, formatWind } from '../utils/units';
 
 const CHANNEL_ID = 'runnow_weather';
 
@@ -32,14 +33,30 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return status === 'granted';
 }
 
+// Quiet hours advertised in Settings: 10:00 PM – 6:00 AM.
+export function isInQuietHours(date: Date = new Date()): boolean {
+  const h = date.getHours();
+  return h >= 22 || h < 6;
+}
+
+export interface NotificationUnits {
+  temp: UnitTemp;
+  wind: UnitWind;
+}
+
 interface NotificationContent {
   title: string;
   body: string;
 }
 
-function buildNotificationContent(verdict: WeatherVerdict, temp?: number | null, windKmh?: number): NotificationContent {
-  const tempStr = temp != null ? `${Math.round(temp)}°C` : '';
-  const windStr = windKmh != null ? `, ${windKmh} km/h wind` : '';
+function buildNotificationContent(
+  verdict: WeatherVerdict,
+  temp?: number | null,
+  windKmh?: number,
+  units: NotificationUnits = { temp: 'C', wind: 'km/h' }
+): NotificationContent {
+  const tempStr = temp != null ? formatTempWithUnit(temp, units.temp) : '';
+  const windStr = windKmh != null ? `, ${formatWind(windKmh, units.wind)} wind` : '';
 
   switch (verdict) {
     case 'GOOD':
@@ -69,9 +86,10 @@ export async function sendRunNotification(
   scheduleId: number,
   verdict: WeatherVerdict,
   temp?: number | null,
-  windKmh?: number
+  windKmh?: number,
+  units?: NotificationUnits
 ): Promise<void> {
-  const content = buildNotificationContent(verdict, temp, windKmh);
+  const content = buildNotificationContent(verdict, temp, windKmh, units);
 
   const contentObj: any = {
     title: content.title,

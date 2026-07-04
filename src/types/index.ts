@@ -21,6 +21,7 @@ export type WeatherVerdict = 'GOOD' | 'MARGINAL' | 'BAD' | 'UNKNOWN';
 export interface HourlyWeather {
   time_epoch: number;
   temp_c: number;
+  feelslike_c?: number;
   wind_kph: number;
   chance_of_rain: number;  // 0–100
   will_it_rain: number;    // 0 or 1

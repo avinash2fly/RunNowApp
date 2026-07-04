@@ -12,6 +12,7 @@ import { Icon, IconName } from '../components/Icon';
 import { Card } from '../components/Card';
 import { TopBar } from '../components/TopBar';
 import { nextRun as computeNextRun } from '../utils/scheduling';
+import { formatTemp, formatWind, formatRunDistance } from '../utils/units';
 import { requestLocationPermission, getCurrentPosition } from '../utils/location';
 import { RunSchedule, WeatherVerdict } from '../types';
 import type { RootStackParamList } from '../navigation/AppNavigator';
@@ -47,7 +48,7 @@ export default function RunReadyScreen() {
 
   useEffect(() => {
     if (prefs.homeLat == null || prefs.homeLon == null || !prefs.weatherApiKey) return;
-    fetchWeatherForecast(prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh)
+    fetchWeatherForecast(prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh, prefs.rainChanceThreshold)
       .then(r => {
         setTempC(r.currentTemp);
         setWind(r.hourly[0]?.wind_kph ?? null);
@@ -69,13 +70,13 @@ export default function RunReadyScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  const tempDisplay = tempC != null ? `${Math.round(tempC)}°` : '--';
+  const tempDisplay = tempC != null ? formatTemp(tempC, prefs.unitTemp) : '--';
   const summary = useMemo(() => {
     const parts: string[] = [];
-    if (wind != null) parts.push(`${Math.round(wind)} km/h`);
+    if (wind != null) parts.push(formatWind(wind, prefs.unitWind));
     if (chanceRain != null) parts.push(`${chanceRain}% rain`);
     return parts.join(' · ') || 'Weather not configured';
-  }, [wind, chanceRain]);
+  }, [wind, chanceRain, prefs.unitWind]);
 
   const conditionIcon = weatherConditionToIcon(conditionCode);
   const verdictText = verdict === 'GOOD' ? tk.go : verdict === 'BAD' ? tk.skip : tk.wait;
@@ -93,7 +94,7 @@ export default function RunReadyScreen() {
             {schedule ? labelFor(schedule) : 'Freestyle run'}
             {'\n'}
             <Text style={{ color: tk.accent }}>
-              {schedule ? `${schedule.distanceKm}K ${schedule.runType.toLowerCase()}` : 'Just go'}
+              {schedule ? `${formatRunDistance(schedule.distanceKm, prefs.unitDistance)} ${schedule.runType.toLowerCase()}` : 'Just go'}
             </Text>
           </Text>
         </View>
@@ -158,7 +159,8 @@ export default function RunReadyScreen() {
       <View style={[styles.bottom, { backgroundColor: tk.surface }]}>
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => navigation.replace('RunActive', { scheduleId: schedule?.id })}
+          onPress={() => navigation.replace('RunActive', { scheduleId: schedule?.id, verdict })}
+          onLongPress={() => navigation.replace('RunActive', { verdict })}
           style={[styles.startBtn, { backgroundColor: tk.accent, shadowColor: tk.accent }]}
         >
           <Icon name="play" size={22} color={tk.onAccent}/>

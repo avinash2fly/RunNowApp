@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { View } from 'react-native';
 import { useTokens } from '../store/PreferencesContext';
 import { Icon, IconName } from '../components/Icon';
+import type { WeatherVerdict } from '../types';
 
 import HomeScreen from '../screens/HomeScreen';
 import ScheduleScreen from '../screens/ScheduleScreen';
@@ -19,7 +20,7 @@ export type RootStackParamList = {
   AddEditSchedule: { scheduleId?: number };
   Connections: undefined;
   RunReady: { scheduleId?: number };
-  RunActive: { scheduleId?: number };
+  RunActive: { scheduleId?: number; verdict?: WeatherVerdict };
 };
 
 export type TabParamList = {
@@ -96,18 +97,18 @@ export function AppNavigator() {
       <Stack.Screen
         name="AddEditSchedule"
         component={AddEditScheduleScreen}
-        options={{ presentation: 'fullScreenModal' }}
+        options={{ presentation: 'modal' }}
       />
       <Stack.Screen name="Connections" component={ConnectionsScreen} />
       <Stack.Screen
         name="RunReady"
         component={RunReadyScreen}
-        options={{ presentation: 'fullScreenModal' }}
+        options={{ presentation: 'modal' }}
       />
       <Stack.Screen
         name="RunActive"
         component={RunActiveScreen}
-        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+        options={{ presentation: 'modal', gestureEnabled: false }}
       />
     </Stack.Navigator>
   );

@@ -10,7 +10,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Circle as SvgCircle } from 'react-native-svg';
 import { usePreferences, useTokens } from '../store/PreferencesContext';
 import { getScheduleById, insertSchedule, updateSchedule } from '../services/database';
-import { scheduleWeeklyRunNotification } from '../services/notifications';
+import { scheduleWeeklyRunNotification, cancelScheduleNotification } from '../services/notifications';
+import { distanceFromKm, kmFromDistance } from '../utils/units';
 import { Icon, IconName } from '../components/Icon';
 import { Card } from '../components/Card';
 import { TopBar } from '../components/TopBar';
@@ -61,7 +62,7 @@ export default function AddEditScheduleScreen() {
   const [notifyNoRain, setNotifyNoRain] = useState(true);
   const [notifyWind, setNotifyWind] = useState(true);
   const [notifyAhead, setNotifyAhead] = useState(true);
-  const [smartReschedule, setSmartReschedule] = useState(true);
+  const [isEnabled, setIsEnabled] = useState(true);
 
   useEffect(() => {
     if (scheduleId) {
@@ -75,6 +76,7 @@ export default function AddEditScheduleScreen() {
         setNotifyNoRain(s.notifyNoRain);
         setNotifyWind(s.notifyWind);
         setNotifyAhead(s.notifyAhead);
+        setIsEnabled(s.isEnabled);
       });
     }
   }, [scheduleId]);
@@ -97,7 +99,7 @@ export default function AddEditScheduleScreen() {
           minute,
           distanceKm,
           runType,
-          isEnabled: true,
+          isEnabled,
           notifyNoRain,
           notifyWind,
           notifyAhead,
@@ -111,7 +113,11 @@ export default function AddEditScheduleScreen() {
           const saved = await insertSchedule(scheduleData);
           savedId = saved.id;
         }
-        await scheduleWeeklyRunNotification(savedId, dow, hour24, minute, leadMinutes);
+        if (isEnabled && notifyAhead) {
+          await scheduleWeeklyRunNotification(savedId, dow, hour24, minute, leadMinutes);
+        } else {
+          await cancelScheduleNotification(savedId);
+        }
       }
       navigation.goBack();
     } catch (err) {
@@ -241,8 +247,10 @@ export default function AddEditScheduleScreen() {
         <Card tone="surface2">
           <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-              <Text style={[styles.distNum, { color: tk.onSurface }]}>{distanceKm.toFixed(1)}</Text>
-              <Text style={[styles.distUnit, { color: tk.onSurfaceVar }]}>km</Text>
+              <Text style={[styles.distNum, { color: tk.onSurface }]}>
+                {distanceFromKm(distanceKm, prefs.unitDistance).toFixed(1)}
+              </Text>
+              <Text style={[styles.distUnit, { color: tk.onSurfaceVar }]}>{prefs.unitDistance}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={[styles.label, { color: tk.onSurfaceVar }]}>~ DURATION</Text>
@@ -254,14 +262,14 @@ export default function AddEditScheduleScreen() {
             minimumValue={1}
             maximumValue={42}
             step={0.5}
-            value={distanceKm}
-            onValueChange={setDistanceKm}
+            value={distanceFromKm(distanceKm, prefs.unitDistance)}
+            onValueChange={v => setDistanceKm(kmFromDistance(v, prefs.unitDistance))}
             minimumTrackTintColor={tk.accent}
             maximumTrackTintColor={tk.surface3}
             thumbTintColor={tk.accent}
           />
           <View style={styles.tickRow}>
-            {['1', '5', '10', '15', '20+ km'].map(t => (
+            {['1', '5', '10', '15', `20+ ${prefs.unitDistance}`].map(t => (
               <Text key={t} style={{ color: tk.onSurfaceVar, fontSize: 10 }}>{t}</Text>
             ))}
           </View>
@@ -298,25 +306,20 @@ export default function AddEditScheduleScreen() {
             value={notifyAhead} onToggle={setNotifyAhead}/>
         </Card>
 
-        {/* Smart reschedule */}
+        {/* Enabled */}
         <Card tone="surface2" style={styles.smartCard}>
-          <View style={[styles.smartIcon, { backgroundColor: tk.accent }]}>
-            <Icon name="bolt" size={18} color={tk.onAccent}/>
+          <View style={[styles.smartIcon, { backgroundColor: isEnabled ? tk.accent : tk.surface3 }]}>
+            <Icon name="bolt" size={18} color={isEnabled ? tk.onAccent : tk.onSurfaceVar}/>
           </View>
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={[styles.smartTitle, { color: tk.onSurface }]}>Smart reschedule</Text>
-              <View style={[styles.smartBadge, { backgroundColor: tk.accentSoft }]}>
-                <Text style={{ color: tk.accent, fontSize: 9, fontWeight: '700', letterSpacing: 0.4 }}>NEW</Text>
-              </View>
-            </View>
+            <Text style={[styles.smartTitle, { color: tk.onSurface }]}>Schedule active</Text>
             <Text style={[styles.smartBody, { color: tk.onSurfaceVar }]}>
-              If conditions go bad, suggest the next best window within ±3 hours.
+              {isEnabled ? 'Weather checks and reminders will run.' : 'Paused — no checks or reminders.'}
             </Text>
           </View>
           <Switch
-            value={smartReschedule}
-            onValueChange={setSmartReschedule}
+            value={isEnabled}
+            onValueChange={setIsEnabled}
             trackColor={{ false: tk.surface3, true: tk.accent }}
             thumbColor="#fff"
           />
@@ -325,8 +328,14 @@ export default function AddEditScheduleScreen() {
 
       {/* Sticky save bar */}
       <View style={[styles.saveBar, { backgroundColor: tk.surface }]}>
-        <TouchableOpacity style={[styles.saveSecondary, { borderColor: tk.outlineStrong }]}>
-          <Icon name="bell" size={22} color={tk.onSurface}/>
+        <TouchableOpacity
+          style={[styles.saveSecondary, {
+            borderColor: tk.outlineStrong,
+            backgroundColor: notifyAhead ? tk.accentSoft : 'transparent',
+          }]}
+          onPress={() => setNotifyAhead(v => !v)}
+        >
+          <Icon name="bell" size={22} color={notifyAhead ? tk.accent : tk.onSurfaceVar}/>
         </TouchableOpacity>
         <TouchableOpacity
           activeOpacity={0.85}
@@ -431,7 +440,6 @@ const styles = StyleSheet.create({
   },
   smartIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   smartTitle: { fontSize: 14, fontWeight: '600' },
-  smartBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   smartBody: { fontSize: 12, marginTop: 2, lineHeight: 16 },
   saveBar: {
     position: 'absolute', left: 0, right: 0, bottom: 0,

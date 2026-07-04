@@ -85,9 +85,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const windPct = Math.round((prefs.windThresholdKmh / 40) * 100);
-  const rainPct = prefs.rainChanceThreshold;
-
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: tk.surface }]} edges={['top', 'left', 'right']}>
       <View style={{ paddingHorizontal: 16 }}>

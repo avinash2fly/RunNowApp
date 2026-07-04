@@ -7,8 +7,9 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePreferences, useTokens } from '../store/PreferencesContext';
-import { getEnabledSchedules, insertHistoryEntry } from '../services/database';
+import { getEnabledSchedules } from '../services/database';
 import { fetchWeatherForecast, weatherConditionToIcon } from '../services/weather';
+import { formatTemp, formatWind, formatRunDistance } from '../utils/units';
 import { sendRunNotification } from '../services/notifications';
 import { VerdictChip } from '../components/VerdictChip';
 import { ForecastBar } from '../components/ForecastBar';
@@ -60,7 +61,7 @@ export default function HomeScreen() {
       if (prefs.homeLat != null && prefs.homeLon != null && apiKey) {
         try {
           const result = await fetchWeatherForecast(
-            prefs.homeLat, prefs.homeLon, apiKey, prefs.windThresholdKmh
+            prefs.homeLat, prefs.homeLon, apiKey, prefs.windThresholdKmh, prefs.rainChanceThreshold
           );
           setHourly(result.hourly);
           setVerdict(result.verdict);
@@ -94,24 +95,15 @@ export default function HomeScreen() {
     setChecking(true);
     try {
       const result = await fetchWeatherForecast(
-        prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh
+        prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh, prefs.rainChanceThreshold
       );
       setHourly(result.hourly);
       setVerdict(result.verdict);
       setCurrentTemp(result.currentTemp);
-      const schedule = nextRun?.schedule;
-      const scheduleId = schedule?.id ?? 0;
-      await sendRunNotification(scheduleId, result.verdict, result.currentTemp, result.hourly[0]?.wind_kph);
-      if (schedule) {
-        await insertHistoryEntry({
-          scheduleId: schedule.id,
-          date: new Date().toISOString(),
-          distanceKm: schedule.distanceKm,
-          durationSec: 0,
-          verdict: result.verdict,
-          completed: false,
-        });
-      }
+      await sendRunNotification(
+        nextRun?.schedule.id ?? 0, result.verdict, result.currentTemp, result.hourly[0]?.wind_kph,
+        { temp: prefs.unitTemp, wind: prefs.unitWind }
+      );
     } catch (err) {
       Alert.alert('Error', 'Weather check failed. Verify your API key in Settings.');
     } finally {
@@ -120,7 +112,8 @@ export default function HomeScreen() {
   };
 
   const condition = hourly[0]?.condition;
-  const windKmh = hourly[0] ? Math.round(hourly[0].wind_kph) : null;
+  const windKph = hourly[0]?.wind_kph ?? null;
+  const feelsLikeC = hourly[0]?.feelslike_c ?? currentTemp;
   const pop = hourly[0] ? hourly[0].chance_of_rain : null;
   const conditionIcon: IconName = weatherConditionToIcon(condition?.code);
 
@@ -178,22 +171,22 @@ export default function HomeScreen() {
             <VerdictChip verdict={verdict}/>
             <View style={styles.heroRow}>
               <Text style={[styles.heroTemp, { color: tk.onSurface }]}>
-                {currentTemp != null ? `${Math.round(currentTemp)}°` : '--'}
+                {currentTemp != null ? formatTemp(currentTemp, prefs.unitTemp) : '--'}
               </Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
                 <Text style={[styles.heroCondition, { color: tk.onSurface }]} numberOfLines={1}>
                   {condition?.text ?? 'Set up weather'}
                 </Text>
-                {windKmh != null && (
+                {feelsLikeC != null && (
                   <Text style={[styles.heroSub, { color: tk.onAccentSoft }]} numberOfLines={1}>
-                    Feels like {currentTemp != null ? Math.round(currentTemp) : '--'}°
+                    Feels like {formatTemp(feelsLikeC, prefs.unitTemp)}
                   </Text>
                 )}
               </View>
               <Icon name={conditionIcon} size={56} color={tk.accent}/>
             </View>
             <View style={[styles.statsRow, { borderTopColor: tk.outline }]}>
-              <Stat icon="wind" label="WIND"  value={windKmh != null ? `${windKmh} km/h` : '--'}/>
+              <Stat icon="wind" label="WIND"  value={windKph != null ? formatWind(windKph, prefs.unitWind) : '--'}/>
               <Stat icon="drop" label="RAIN"  value={pop != null ? `${pop}%` : '--'}/>
               <Stat icon="bolt" label="VERDICT" value={verdict === 'GOOD' ? 'Go' : verdict === 'MARGINAL' ? 'Wait' : verdict === 'BAD' ? 'Skip' : '—'}/>
             </View>
@@ -211,7 +204,7 @@ export default function HomeScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.runTitle, { color: tk.onSurface }]} numberOfLines={1}>
-                  {nextRunLabel(nextRun.time)} · {nextRun.schedule.distanceKm}K {nextRun.schedule.runType.toLowerCase()}
+                  {nextRunLabel(nextRun.time)} · {formatRunDistance(nextRun.schedule.distanceKm, prefs.unitDistance)} {nextRun.schedule.runType.toLowerCase()}
                 </Text>
                 <Text style={[styles.runSub, { color: tk.onSurfaceVar }]} numberOfLines={1}>
                   {formatHHMM(new Date(nextRun.time))}
@@ -230,16 +223,25 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Tip card */}
-        <Card tone="surface1" style={styles.tipCard}>
-          <View style={[styles.tipIcon, { backgroundColor: tipBg(verdict, tk) }]}>
-            <Icon name={tipIconName(verdict)} size={20} color={tipFg(verdict, tk)}/>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.tipTitle, { color: tk.onSurface }]}>{tipTitle(verdict)}</Text>
-            <Text style={[styles.tipBody, { color: tk.onSurfaceVar }]}>{tipBody(verdict, windKmh)}</Text>
-          </View>
-        </Card>
+        {/* Tip card — tappable when weather isn't configured yet */}
+        <TouchableOpacity
+          activeOpacity={verdict === 'UNKNOWN' ? 0.85 : 1}
+          disabled={verdict !== 'UNKNOWN'}
+          onPress={() => (navigation as any).navigate('Settings')}
+        >
+          <Card tone="surface1" style={styles.tipCard}>
+            <View style={[styles.tipIcon, { backgroundColor: tipBg(verdict, tk) }]}>
+              <Icon name={tipIconName(verdict)} size={20} color={tipFg(verdict, tk)}/>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.tipTitle, { color: tk.onSurface }]}>{tipTitle(verdict)}</Text>
+              <Text style={[styles.tipBody, { color: tk.onSurfaceVar }]}>
+                {tipBody(verdict, formatWind(prefs.windThresholdKmh, prefs.unitWind), prefs.notifyLeadMinutes)}
+              </Text>
+            </View>
+            {verdict === 'UNKNOWN' && <Icon name="chevron" size={18} color={tk.onSurfaceVar}/>}
+          </Card>
+        </TouchableOpacity>
 
         {/* Start run + check buttons */}
         <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -304,10 +306,9 @@ function tipTitle(v: WeatherVerdict): string {
   }[v];
 }
 
-function tipBody(v: WeatherVerdict, windKmh: number | null): string {
-  const wind = windKmh != null ? `wind under ${windKmh + 1} km/h` : 'light winds';
+function tipBody(v: WeatherVerdict, windThresholdStr: string, leadMinutes: number): string {
   return {
-    GOOD: `No rain, ${wind}. We'll ping you 30 min before your window opens.`,
+    GOOD: `No rain, wind under ${windThresholdStr}. We'll ping you ${leadMinutes} min before your window opens.`,
     MARGINAL: 'Some chance of rain. Pack light layers and a cap, just in case.',
     BAD: 'Rough conditions for the next 4 hours. Try indoor cross-training.',
     UNKNOWN: 'Set your home location and WeatherAPI key in Settings to get forecasts.',

@@ -16,7 +16,8 @@ export async function fetchWeatherForecast(
   lat: number,
   lon: number,
   apiKey: string,
-  windThresholdKph?: number
+  windThresholdKph?: number,
+  rainChanceThreshold?: number
 ): Promise<WeatherResult> {
   const url = `${BASE_URL}?key=${apiKey}&q=${lat},${lon}&days=2&aqi=no&alerts=no`;
 
@@ -37,14 +38,18 @@ export async function fetchWeatherForecast(
   const currentTemp = hourly[0]?.temp_c ?? null;
 
   return {
-    verdict: evaluateVerdict(hourly, windThresholdKph),
+    verdict: evaluateVerdict(hourly, windThresholdKph, rainChanceThreshold),
     hourly,
     allHourly,
     currentTemp,
   };
 }
 
-export function evaluateVerdict(hourly: HourlyWeather[], windThresholdKph = WIND_THRESHOLD_KPH): WeatherVerdict {
+export function evaluateVerdict(
+  hourly: HourlyWeather[],
+  windThresholdKph = WIND_THRESHOLD_KPH,
+  rainChanceThreshold = POP_THRESHOLD
+): WeatherVerdict {
   if (!hourly.length) return 'UNKNOWN';
 
   const slots = hourly.slice(0, 4);
@@ -52,17 +57,13 @@ export function evaluateVerdict(hourly: HourlyWeather[], windThresholdKph = WIND
   const hasRain = slots.some(h => h.will_it_rain === 1);
   const hasSnow = slots.some(h => h.will_it_snow === 1);
   const hasHighWind = slots.some(h => h.wind_kph > windThresholdKph);
-  const hasHighPop = slots.some(h => h.chance_of_rain > POP_THRESHOLD);
+  const hasHighPop = slots.some(h => h.chance_of_rain > rainChanceThreshold);
 
   if (hasRain || hasSnow || hasHighWind) return 'BAD';
   if (hasHighPop) return 'MARGINAL';
   return 'GOOD';
 }
 
-
-export function formatTemp(celsius: number): string {
-  return `${Math.round(celsius)}°`;
-}
 
 export function weatherConditionToEmoji(code: number): string {
   if (code === 1000) return '☀️';

@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { PreferencesProvider, useTokens } from './src/store/PreferencesContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
-import { initializeNotifications, requestNotificationPermission, addNotificationResponseListener, sendRunNotification } from './src/services/notifications';
+import { initializeNotifications, requestNotificationPermission, addNotificationResponseListener, sendRunNotification, isInQuietHours } from './src/services/notifications';
 import { registerBackgroundTask } from './src/services/backgroundTask';
 import { getScheduleById, insertHistoryEntry } from './src/services/database';
 import { fetchWeatherForecast } from './src/services/weather';
@@ -48,12 +48,17 @@ export default function App() {
         const raw = await AsyncStorage.getItem('@runnow_prefs');
         const prefs = raw ? JSON.parse(raw) : null;
         if (prefs?.homeLat == null || prefs?.homeLon == null || !prefs?.weatherApiKey) return;
+        if (prefs?.quietHoursEnabled && isInQuietHours()) return;
 
         const weather = await fetchWeatherForecast(
-          prefs.homeLat, prefs.homeLon, prefs.weatherApiKey, prefs.windThresholdKmh
+          prefs.homeLat, prefs.homeLon, prefs.weatherApiKey,
+          prefs.windThresholdKmh, prefs.rainChanceThreshold
         );
 
-        await sendRunNotification(scheduleId, weather.verdict, weather.currentTemp, weather.hourly[0]?.wind_kph);
+        await sendRunNotification(
+          scheduleId, weather.verdict, weather.currentTemp, weather.hourly[0]?.wind_kph,
+          { temp: prefs.unitTemp ?? 'C', wind: prefs.unitWind ?? 'km/h' }
+        );
 
         await insertHistoryEntry({
           scheduleId: schedule.id,
